@@ -1,0 +1,11 @@
+#/etc/systemd/system/offline-transcode.service 
+[Unit]
+Description=Offline transcode for Jellyfin
+After=network-online.target
+[Service]
+User=media
+ExecStart=/usr/local/bin/offline_transcode.sh
+Nice=10
+IOSchedulingClass=idle
+[Install]
+WantedBy=multi-user.target
