@@ -85,7 +85,14 @@ log "Filtre vidéo: $VFILT"
 log "Paramètres x265: $X265_PARAMS"
 
 shopt -s nullglob
-mapfile -d '' -t DIRS < <(find "$SRC" -type d -print0 | sort -z)
+
+log "Début de l'énumération des répertoires depuis $SRC"
+if ! mapfile -d '' -t DIRS < <(find "$SRC" -type d -print0 2>>"$LOG" | sort -z); then
+  status_dirs=("${PIPESTATUS[@]}")
+  fatal "Échec lors de l'énumération des répertoires (PIPESTATUS=${status_dirs[*]})"
+fi
+status_dirs=("${PIPESTATUS[@]}")
+log "Énumération terminée (PIPESTATUS=${status_dirs[*]})"
 
 SKIP_LOCKED=0
 SKIP_DONE=0
@@ -97,10 +104,17 @@ total_dirs=${#DIRS[@]}
 log "Répertoires détectés: $total_dirs"
 
 for DIR in "${DIRS[@]}"; do
+  dir_start=$SECONDS
   REL_DIR="${DIR#$SRC/}"
   [[ "$REL_DIR" == "$DIR" ]] && REL_DIR=""
 
-  log "Inspection du répertoire: ${REL_DIR:-.}"
+  log "Inspection du répertoire: ${REL_DIR:-.} (chemin complet: $DIR)"
+
+  if [[ ! -r "$DIR" ]]; then
+    ((FAILED++))
+    warn "Répertoire illisible, permissions manquantes? ${REL_DIR:-.}"
+    continue
+  fi
 
   if [[ -f "$DIR/.riplock" ]]; then
     ((SKIP_LOCKED++))
@@ -109,8 +123,16 @@ for DIR in "${DIRS[@]}"; do
   fi
 
   FILES=()
-  mapfile -d '' -t FILES < <(find "$DIR" -maxdepth 1 -type f \
-    \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.vob" -o -iname "*.m2ts" \) -print0 | sort -z)
+  log "Recherche de fichiers médias dans ${REL_DIR:-.}"
+  if ! mapfile -d '' -t FILES < <(find "$DIR" -maxdepth 1 -type f \
+    \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.vob" -o -iname "*.m2ts" \) -print0 2>>"$LOG" | sort -z); then
+    status_files=("${PIPESTATUS[@]}")
+    ((FAILED++))
+    warn "Échec de la recherche de fichiers médias dans ${REL_DIR:-.} (PIPESTATUS=${status_files[*]})"
+    continue
+  fi
+  status_files=("${PIPESTATUS[@]}")
+  log "Fichiers médias détectés dans ${REL_DIR:-.}: ${#FILES[@]} (PIPESTATUS=${status_files[*]})"
 
   if (( ${#FILES[@]} == 0 )); then
     ((SKIP_EMPTY++))
@@ -179,6 +201,9 @@ for DIR in "${DIRS[@]}"; do
     ((TRANSCODED++))
     log "Succès: $REL (marqueur $(basename "$DF"))"
   done
+
+  dir_duration=$(( SECONDS - dir_start ))
+  log "Inspection terminée pour ${REL_DIR:-.} (durée=${dir_duration}s)"
 
 done
 
