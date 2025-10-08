@@ -123,7 +123,7 @@ for DIR in "${DIRS[@]}"; do
   fi
 
   FILES=()
-  log "Recherche de fichiers médias dans ${REL_DIR:-.}"
+  log "Recherche de fichiers médias dans ${REL_DIR:-.} (chemin complet: $DIR)"
   if ! mapfile -d '' -t FILES < <(find "$DIR" -maxdepth 1 -type f \
     \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.vob" -o -iname "*.m2ts" \) -print0 2>>"$LOG" | sort -z); then
     status_files=("${PIPESTATUS[@]}")
@@ -132,7 +132,7 @@ for DIR in "${DIRS[@]}"; do
     continue
   fi
   status_files=("${PIPESTATUS[@]}")
-  log "Fichiers médias détectés dans ${REL_DIR:-.}: ${#FILES[@]} (PIPESTATUS=${status_files[*]})"
+  log "Fichiers médias détectés dans ${REL_DIR:-.}: ${#FILES[@]} (PIPESTATUS=${status_files[*]}, chemin complet: $DIR)"
 
   if (( ${#FILES[@]} == 0 )); then
     ((SKIP_EMPTY++))
