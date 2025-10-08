@@ -100,7 +100,7 @@ log "Titre détecté: $TITLE ; DISC_ID=$DISC_ID ; Sortie: $OUT"
 #LOCKDIR="$OUT/.riplock.d"
 LOCK="$OUT/.riplock"
 
-if [[ -f "$LOCK" ]] then
+if [[ -f "$LOCK" ]] ; then
   log "Un rip est déjà en cours pour '$TITLE' (lock: $LOCKDIR). Abandon."
   exit 0
 fi
