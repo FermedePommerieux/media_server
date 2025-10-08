@@ -6,6 +6,5 @@ After=network-online.target
 User=media
 ExecStart=/usr/local/bin/offline_transcode.sh
 Nice=10
-IOSchedulingClass=idle
-[Install]
-WantedBy=multi-user.target
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
