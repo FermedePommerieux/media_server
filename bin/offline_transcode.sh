@@ -1,5 +1,5 @@
-#/usr/local/bin/offline_transcode.sh 
 #!/bin/bash
+# /usr/local/bin/offline_transcode.sh
 # offline_transcode.sh — profil Archivage (x265), respecte .riplock par répertoire
 set -euo pipefail
 
