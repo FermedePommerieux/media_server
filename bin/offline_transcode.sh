@@ -151,11 +151,24 @@ for DIR in "${DIRS[@]}"; do
 
     log "Transcoding: $REL -> ${OUT#$DST/} (hauteur=${HEIGHT}p, x265 CRF=${CRF}, preset=${PRESET}, threads=$THREAD_LABEL)"
 
-    if ! ffmpeg -hide_banner -loglevel error "${THREAD_ARGS[@]}" -i "$F" \
-        "${MAPARGS[@]}" -map_chapters 0 \
-        -vf "$VFILT" \
-        -c:v libx265 -preset "$PRESET" -crf "$CRF" -x265-params "$X265_PARAMS" \
-        -c:a copy -c:s copy "$OUT" >> "$LOG" 2>&1; then
+    if [[ -e "$OUT" ]]; then
+      warn "Le fichier de sortie existe déjà, suppression avant nouveau transcodage: ${OUT#$DST/}"
+      rm -f "$OUT"
+    fi
+
+    FFMPEG_CMD=(
+      ffmpeg -hide_banner -loglevel error -nostdin -y
+      "${THREAD_ARGS[@]}"
+      -i "$F"
+      "${MAPARGS[@]}" -map_chapters 0
+      -vf "$VFILT"
+      -c:v libx265 -preset "$PRESET" -crf "$CRF" -x265-params "$X265_PARAMS"
+      -c:a copy -c:s copy "$OUT"
+    )
+
+    log "Commande FFmpeg: $(printf '%q ' "${FFMPEG_CMD[@]}")"
+
+    if ! "${FFMPEG_CMD[@]}" >> "$LOG" 2>&1; then
       ((FAILED++))
       warn "Échec du transcodage: $REL (voir détails FFmpeg ci-dessus)"
       [[ -f "$OUT" ]] && rm -f "$OUT"
