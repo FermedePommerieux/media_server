@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# /usr/local/bin/do_rip.sh
+# script called by dvd-ripd.sh
 # dvd_rip.sh — Rip automatique d'un DVD avec MakeMKV
 # - Gère les doublons par (TITLE + empreinte de plusieurs secteurs)
 # - Journalise proprement
