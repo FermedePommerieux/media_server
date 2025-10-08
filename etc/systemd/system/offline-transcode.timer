@@ -1,0 +1,8 @@
+#/etc/systemd/system/offline-transcode.timer
+[Unit]
+Description=Run offline transcode nightly
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+[Install]
+WantedBy=timers.target
