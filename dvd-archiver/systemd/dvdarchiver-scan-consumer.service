@@ -1,0 +1,14 @@
+[Unit]
+Description=DVD Archiver - Consommateur Phase 2 (scan + IA)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dvdarchiver.conf
+ExecStart=/usr/local/bin/scan_consumer.sh
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
