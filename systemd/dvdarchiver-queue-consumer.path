@@ -1,0 +1,10 @@
+# /etc/systemd/system/dvdarchiver-queue-consumer.path
+[Unit]
+Description=Surveillance de la file DVD Archiver
+
+[Path]
+PathExistsGlob=/var/spool/dvdarchiver/JOB_*.job
+Unit=dvdarchiver-queue-consumer.service
+
+[Install]
+WantedBy=multi-user.target
