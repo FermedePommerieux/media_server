@@ -1,0 +1,33 @@
+# Configuration DVD Archiver - Phase 2 Scan & IA
+# Copiez ce fichier vers /etc/dvdarchiver.conf et ajustez les valeurs si nécessaire.
+
+# --- Phase 1 (rappel utile) ---
+DEST="/mnt/media_master"
+
+# --- Phase 2: Scan & OCR ---
+SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
+SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
+SCAN_TRIGGER_GLOB="${DEST:-/mnt/media_master}/*/mkv/title*.mkv"
+
+# OCR / vidéo
+FFMPEG_BIN="ffmpeg"
+FFPROBE_BIN="ffprobe"
+OCR_BIN="tesseract"
+OCR_LANGS="eng+fra+spa+ita+deu"
+FRAME_RATE_MENU_FPS=1
+FRAME_MAX_MENU=30
+MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
+STRUCT_FALLBACK_FROM_MKV=1
+
+# Heuristiques & seuils
+RUNTIME_TOLERANCE_SEC=120
+CONFIDENCE_MIN=0.50
+
+# --- IA / LLM (par défaut : Qwen2.5-14B via Ollama) ---
+LLM_ENABLE=1
+LLM_PROVIDER="ollama"
+LLM_ENDPOINT="http://127.0.0.1:11434"
+LLM_MODEL="qwen2.5:14b-instruct-q4_K_M"
+LLM_TEMPERATURE=0.2
+LLM_TIMEOUT_SEC=3600
+LLM_API_KEY=""
