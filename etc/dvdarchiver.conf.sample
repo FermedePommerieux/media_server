@@ -1,0 +1,32 @@
+# /etc/dvdarchiver.conf
+
+# --- Paths & IO ---
+DEST="/mnt/media_master"            # racine des archives (par défaut)
+QUEUE_DIR="/var/spool/dvdarchiver"  # file d’attente (jobs)
+LOG_DIR="/var/log/dvdarchiver"      # logs scripts/services
+TMP_DIR="/var/tmp/dvdarchiver"      # tmp de travail
+
+# --- Device & tools ---
+DEVICE="/dev/sr0"                   # lecteur optique principal
+MAKEMKV_BIN="makemkvcon"
+ISOINFO_BIN="isoinfo"
+LSDVD_BIN="lsdvd"
+EJECT_BIN="eject"
+MOUNT_OPTS="udf,iso9660,ro"
+
+# --- MakeMKV options ---
+MAKEMKV_OPTS="--minlength=0"        # par défaut: rien n’est filtré
+
+# --- Hash (empreinte disque) ---
+DISC_HASH_COUNT_SECT=64
+DISC_HASH_SKIP_SECT=32768
+DISC_HASH_EXTRA_OFFSETS="0 262144"
+DISC_HASH_TRIM=16                   # pour les noms courts; stocker le SHA-256 complet en JSON
+
+# --- Policies ---
+MIN_FREE_GB=10                      # espace libre minimal avant rip
+EJECT_ON_DONE=1                     # éjecter quand terminé (1/0)
+ALLOW_ISO_DUMP=0                    # si 1, dumper ISO brute dans raw/
+
+# --- Archivage: structure ---
+ARCHIVE_LAYOUT_VERSION="1.0"
