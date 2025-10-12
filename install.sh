@@ -44,9 +44,11 @@ for arg in "$@"; do
   esac
 done
 
-install -d "$BINDIR" "$LIBDIR"
+SCAN_PY_DIR="${PREFIX}/bin/scan"
 
-for script in "$SCRIPT_DIR"/bin/do_rip.sh "$SCRIPT_DIR"/bin/queue_enqueue.sh "$SCRIPT_DIR"/bin/queue_consumer.sh; do
+install -d "$BINDIR" "$LIBDIR" "$SCAN_PY_DIR"
+
+for script in "$SCRIPT_DIR"/bin/do_rip.sh "$SCRIPT_DIR"/bin/queue_enqueue.sh "$SCRIPT_DIR"/bin/queue_consumer.sh "$SCRIPT_DIR"/bin/scan_enqueue.sh "$SCRIPT_DIR"/bin/scan_consumer.sh; do
   install -m 0755 "$script" "$BINDIR/$(basename "$script")"
   echo "Installé $BINDIR/$(basename "$script")"
 done
@@ -54,6 +56,13 @@ done
 for lib in "$SCRIPT_DIR"/bin/lib/common.sh "$SCRIPT_DIR"/bin/lib/hash.sh "$SCRIPT_DIR"/bin/lib/techdump.sh; do
   install -m 0755 "$lib" "$LIBDIR/$(basename "$lib")"
   echo "Installé $LIBDIR/$(basename "$lib")"
+done
+
+for module in "$SCRIPT_DIR"/bin/scan/*.py; do
+  mode=0644
+  [[ $(basename "$module") == "scanner.py" ]] && mode=0755
+  install -m "$mode" "$module" "$SCAN_PY_DIR/$(basename "$module")"
+  echo "Installé $SCAN_PY_DIR/$(basename "$module")"
 done
 
 if [[ ! -f "$CONFIG_FILE" ]]; then
@@ -70,13 +79,17 @@ DEST="${DEST:-/mnt/media_master}"
 QUEUE_DIR="${QUEUE_DIR:-/var/spool/dvdarchiver}"
 LOG_DIR="${LOG_DIR:-/var/log/dvdarchiver}"
 TMP_DIR="${TMP_DIR:-/var/tmp/dvdarchiver}"
+SCAN_QUEUE_DIR="${SCAN_QUEUE_DIR:-/var/spool/dvdarchiver-scan}"
+SCAN_LOG_DIR="${SCAN_LOG_DIR:-/var/log/dvdarchiver-scan}"
 
-mkdir -p "$DEST" "$QUEUE_DIR" "$LOG_DIR" "$TMP_DIR"
+mkdir -p "$DEST" "$QUEUE_DIR" "$LOG_DIR" "$TMP_DIR" "$SCAN_QUEUE_DIR" "$SCAN_LOG_DIR"
 
 if [[ $WITH_SYSTEMD -eq 1 ]]; then
   install -Dm0644 "$SCRIPT_DIR"/systemd/dvdarchiver-queue-consumer.service "$SYSTEMD_DIR/dvdarchiver-queue-consumer.service"
   install -Dm0644 "$SCRIPT_DIR"/systemd/dvdarchiver-queue-consumer.path "$SYSTEMD_DIR/dvdarchiver-queue-consumer.path"
   install -Dm0644 "$SCRIPT_DIR"/systemd/dvdarchiver-queue-consumer.timer "$SYSTEMD_DIR/dvdarchiver-queue-consumer.timer"
+  install -Dm0644 "$SCRIPT_DIR"/systemd/dvdarchiver-scan-consumer.service "$SYSTEMD_DIR/dvdarchiver-scan-consumer.service"
+  install -Dm0644 "$SCRIPT_DIR"/systemd/dvdarchiver-scan-consumer.path "$SYSTEMD_DIR/dvdarchiver-scan-consumer.path"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
   fi
