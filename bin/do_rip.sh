@@ -3,9 +3,26 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR_DEFAULT="$SCRIPT_DIR/lib"
-LIB_DIR="${LIB_DIR:-$LIB_DIR_DEFAULT}"
-if [[ ! -d "$LIB_DIR" ]]; then
-  LIB_DIR="/usr/local/lib/dvdarchiver"
+LIB_DIR_PREFIX="$(cd "$SCRIPT_DIR/.." && pwd)/lib/dvdarchiver"
+declare -a LIB_DIR_CANDIDATES=()
+if [[ -n "${LIB_DIR:-}" ]]; then
+  LIB_DIR_CANDIDATES+=("${LIB_DIR}")
+fi
+LIB_DIR_CANDIDATES+=("$LIB_DIR_DEFAULT")
+if [[ "$LIB_DIR_PREFIX" != "$LIB_DIR_DEFAULT" ]]; then
+  LIB_DIR_CANDIDATES+=("$LIB_DIR_PREFIX")
+fi
+LIB_DIR_CANDIDATES+=("/usr/local/lib/dvdarchiver")
+LIB_DIR=""
+for candidate in "${LIB_DIR_CANDIDATES[@]}"; do
+  if [[ -d "$candidate" ]]; then
+    LIB_DIR="$candidate"
+    break
+  fi
+done
+if [[ -z "$LIB_DIR" ]]; then
+  printf 'Impossible de localiser la bibliothèque DVD Archiver (candidats: %s)\n' "$(IFS=', '; printf '%s' "${LIB_DIR_CANDIDATES[*]}")" >&2
+  exit 2
 fi
 # shellcheck source=bin/lib/common.sh
 source "$LIB_DIR/common.sh"
