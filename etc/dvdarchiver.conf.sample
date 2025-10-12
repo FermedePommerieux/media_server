@@ -1,62 +1,56 @@
 # /etc/dvdarchiver.conf
 
-# --- Paths & IO ---
-DEST="/mnt/media_master"            # racine des archives (par défaut)
-QUEUE_DIR="/var/spool/dvdarchiver"  # file d’attente (jobs)
-LOG_DIR="/var/log/dvdarchiver"      # logs scripts/services
-TMP_DIR="/var/tmp/dvdarchiver"      # tmp de travail
+# --- Dossiers principaux ---
+DEST="/mnt/media_master"
+QUEUE_DIR="/var/spool/dvdarchiver"
+LOG_DIR="/var/log/dvdarchiver"
+TMP_DIR="/var/tmp/dvdarchiver"
+SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
+SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
 
-# --- Device & tools ---
-DEVICE="/dev/sr0"                   # lecteur optique principal
+# --- Lecteur & outils de base ---
+DEVICE="/dev/sr0"
 MAKEMKV_BIN="makemkvcon"
 ISOINFO_BIN="isoinfo"
 LSDVD_BIN="lsdvd"
 EJECT_BIN="eject"
 MOUNT_OPTS="udf,iso9660,ro"
+MAKEMKV_OPTS="--minlength=0"
 
-# --- MakeMKV options ---
-MAKEMKV_OPTS="--minlength=0"        # par défaut: rien n’est filtré
+# --- Phase 1 : backup décrypté des menus ---
+KEEP_MENU_VOBS=1
+MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
+MAKEMKV_BACKUP_ENABLE=1
+MAKEMKV_BACKUP_OPTS="--decrypt"
+MOUNT_TMP_DIR="/mnt/dvd_tmp"
 
-# --- Hash (empreinte disque) ---
+# --- Empreintes & politique de rip ---
 DISC_HASH_COUNT_SECT=64
 DISC_HASH_SKIP_SECT=32768
 DISC_HASH_EXTRA_OFFSETS="0 262144"
-DISC_HASH_TRIM=16                   # pour les noms courts; stocker le SHA-256 complet en JSON
-
-# --- Policies ---
-MIN_FREE_GB=10                      # espace libre minimal avant rip
-EJECT_ON_DONE=1                     # éjecter quand terminé (1/0)
-ALLOW_ISO_DUMP=0                    # si 1, dumper ISO brute dans raw/
-
-# --- Archivage: structure ---
+DISC_HASH_TRIM=16
+MIN_FREE_GB=10
+EJECT_ON_DONE=1
+ALLOW_ISO_DUMP=0
 ARCHIVE_LAYOUT_VERSION="1.0"
 
-# --- Phase 2: Scan & OCR ---
-SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
-SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
-
-# Détection de dossiers prêts (phase 1 terminée)
-SCAN_TRIGGER_GLOB="${DEST:-/mnt/media_master}/*/mkv/title*.mkv"
-
-# OCR / vidéo
+# --- Phase 2 : OCR des menus .VOB ---
 FFMPEG_BIN="ffmpeg"
-FFPROBE_BIN="ffprobe"
-OCR_BIN="tesseract"
+TESSERACT_BIN="tesseract"
 OCR_LANGS="eng+fra+spa+ita+deu"
-FRAME_RATE_MENU_FPS=1
-FRAME_MAX_MENU=30
-MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
-STRUCT_FALLBACK_FROM_MKV=1
-
-# Heuristiques & seuils
-RUNTIME_TOLERANCE_SEC=120
-CONFIDENCE_MIN=0.50
+MENU_FRAME_FPS=1
+MENU_MAX_FRAMES=30
+MENU_SCENE_MODE=1
+MENU_SCENE_THRESHOLD=0.4
+MENU_PREPROC_FILTERS="yadif,eq=contrast=1.1:brightness=0.02"
 
 # --- IA / LLM ---
 LLM_ENABLE=1
-LLM_PROVIDER="openai"
-LLM_MODEL="gpt-4o-mini"
-LLM_ENDPOINT=""
-LLM_API_KEY=""
-LLM_TIMEOUT_SEC=60
+LLM_PROVIDER="ollama"
+LLM_ENDPOINT="http://127.0.0.1:11434"
+LLM_MODEL="qwen2.5:14b-instruct-q4_K_M"
 LLM_TEMPERATURE=0.2
+LLM_TIMEOUT_SEC=3600
+
+# --- Déclencheurs scan ---
+SCAN_TRIGGER_GLOB="${DEST:-/mnt/media_master}/*/mkv/title*.mkv"

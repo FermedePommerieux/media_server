@@ -12,6 +12,62 @@ CONFIG_SAMPLE="$SCRIPT_DIR/etc/dvdarchiver.conf.sample"
 SYSTEMD_DIR="/etc/systemd/system"
 UDEV_DIR="/etc/udev/rules.d"
 
+APT_UPDATED=0
+
+ensure_package() {
+  local pkg="$1"
+  if ! command -v dpkg >/dev/null 2>&1; then
+    echo "dpkg absent, veuillez installer $pkg manuellement" >&2
+    return
+  fi
+  if dpkg -s "$pkg" >/dev/null 2>&1; then
+    return
+  fi
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "apt-get indisponible, impossible d'installer $pkg automatiquement" >&2
+    return
+  fi
+  if [[ $APT_UPDATED -eq 0 ]]; then
+    echo "Mise à jour de l'index APT..."
+    set +e
+    apt-get update >/dev/null 2>&1
+    APT_UPDATED=1
+    set -e
+  fi
+  echo "Installation du paquet $pkg"
+  set +e
+  DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+  local status=$?
+  set -e
+  if [[ $status -ne 0 ]]; then
+    echo "Avertissement: installation de $pkg impossible" >&2
+  fi
+}
+
+install_ollama() {
+  if command -v ollama >/dev/null 2>&1; then
+    return
+  fi
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "curl requis pour installer Ollama" >&2
+    return
+  fi
+  echo "Installation d'Ollama..."
+  set +e
+  curl -fsSL https://ollama.com/install.sh | sh
+  local status=$?
+  set -e
+  if [[ $status -ne 0 ]]; then
+    echo "Avertissement: installation Ollama échouée" >&2
+    return
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    set +e
+    systemctl enable --now ollama >/dev/null 2>&1
+    set -e
+  fi
+}
+
 usage() {
   cat <<USAGE
 Usage: $0 [--with-systemd] [--with-udev] [--prefix=PATH]
@@ -47,6 +103,18 @@ done
 SCAN_PY_DIR="${PREFIX}/bin/scan"
 
 install -d "$BINDIR" "$LIBDIR" "$SCAN_PY_DIR"
+
+for pkg in tesseract-ocr ffmpeg mkvtoolnix curl; do
+  ensure_package "$pkg"
+done
+
+install_ollama
+if command -v ollama >/dev/null 2>&1; then
+  echo "Mise à jour du modèle Ollama qwen2.5:14b-instruct-q4_K_M"
+  set +e
+  ollama pull qwen2.5:14b-instruct-q4_K_M >/dev/null 2>&1
+  set -e
+fi
 
 for script in "$SCRIPT_DIR"/bin/do_rip.sh "$SCRIPT_DIR"/bin/queue_enqueue.sh "$SCRIPT_DIR"/bin/queue_consumer.sh "$SCRIPT_DIR"/bin/scan_enqueue.sh "$SCRIPT_DIR"/bin/scan_consumer.sh; do
   install -m 0755 "$script" "$BINDIR/$(basename "$script")"
@@ -103,5 +171,11 @@ if [[ $WITH_UDEV -eq 1 ]]; then
   fi
   echo "Règle udev installée"
 fi
+
+echo
+echo "Tests rapides suggérés :"
+echo "  scan_enqueue.sh \"${DEST}/<DISC_UID>\""
+echo "  journalctl -u dvdarchiver-scan-consumer.service -f"
+echo "  cat ${DEST}/<DISC_UID>/meta/metadata_ia.json"
 
 echo "Installation terminée"

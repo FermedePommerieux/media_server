@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orchestrateur de la phase 2 (scan + OCR + IA) du pipeline DVD."""
+"""Orchestrateur OCR + LLM pour la phase 2 du DVD Archiver."""
 from __future__ import annotations
 
 import json
@@ -9,9 +9,9 @@ import shutil
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Any, Dict, List
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -26,42 +26,39 @@ import writers  # type: ignore  # noqa: E402
 
 @dataclass
 class Config:
-    """Configuration lue depuis l'environnement."""
-
     ffmpeg_bin: str = "ffmpeg"
     ffprobe_bin: str = "ffprobe"
-    ocr_bin: str = "tesseract"
-    ocr_langs: str = "eng"
-    frame_rate_menu_fps: float = 1.0
-    frame_max_menu: int = 30
-    menu_vob_patterns: List[str] = field(default_factory=list)
-    struct_fallback_from_mkv: bool = True
-    runtime_tolerance_sec: int = 120
-    confidence_min: float = 0.5
+    tesseract_bin: str = "tesseract"
+    ocr_langs: str = "eng+fra+spa+ita+deu"
+    menu_frame_fps: float = 1.0
+    menu_max_frames: int = 30
+    menu_scene_mode: int = 1
+    menu_scene_threshold: float = 0.4
+    menu_preproc_filters: str = "yadif,eq=contrast=1.1:brightness=0.02"
+    menu_vob_glob: str = "VIDEO_TS.VOB VTS_*_0.VOB"
     llm_enable: bool = True
     archive_layout_version: str = "1.0"
 
     @classmethod
     def from_env(cls) -> "Config":
-        patterns = os.environ.get("MENU_VOB_GLOB", "VIDEO_TS.VOB VTS_*_0.VOB").split()
         return cls(
-            ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"),
+            ffmpeg_bin=os.environ.get("FFMPEG_BIN", cls.ffmpeg_bin),
             ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe"),
-            ocr_bin=os.environ.get("OCR_BIN", "tesseract"),
-            ocr_langs=os.environ.get("OCR_LANGS", "eng+fra"),
-            frame_rate_menu_fps=float(os.environ.get("FRAME_RATE_MENU_FPS", "1")),
-            frame_max_menu=int(os.environ.get("FRAME_MAX_MENU", "30")),
-            menu_vob_patterns=patterns,
-            struct_fallback_from_mkv=os.environ.get("STRUCT_FALLBACK_FROM_MKV", "1") == "1",
-            runtime_tolerance_sec=int(os.environ.get("RUNTIME_TOLERANCE_SEC", "120")),
-            confidence_min=float(os.environ.get("CONFIDENCE_MIN", "0.5")),
+            tesseract_bin=os.environ.get("TESSERACT_BIN", cls.tesseract_bin),
+            ocr_langs=os.environ.get("OCR_LANGS", cls.ocr_langs),
+            menu_frame_fps=float(os.environ.get("MENU_FRAME_FPS", str(cls.menu_frame_fps))),
+            menu_max_frames=int(os.environ.get("MENU_MAX_FRAMES", str(cls.menu_max_frames))),
+            menu_scene_mode=int(os.environ.get("MENU_SCENE_MODE", str(cls.menu_scene_mode))),
+            menu_scene_threshold=float(
+                os.environ.get("MENU_SCENE_THRESHOLD", str(cls.menu_scene_threshold))
+            ),
+            menu_preproc_filters=os.environ.get(
+                "MENU_PREPROC_FILTERS", cls.menu_preproc_filters
+            ),
+            menu_vob_glob=os.environ.get("MENU_VOB_GLOB", cls.menu_vob_glob),
             llm_enable=os.environ.get("LLM_ENABLE", "1") == "1",
-            archive_layout_version=os.environ.get("ARCHIVE_LAYOUT_VERSION", "1.0"),
+            archive_layout_version=os.environ.get("ARCHIVE_LAYOUT_VERSION", cls.archive_layout_version),
         )
-
-
-class ScanError(Exception):
-    """Erreur bloquante lors du scan."""
 
 
 def setup_logging() -> None:
@@ -72,95 +69,135 @@ def setup_logging() -> None:
     )
 
 
-def ensure_tool(name: str) -> bool:
-    return shutil.which(name) is not None
-
-
-def extract_menu_frames(
-    vob_paths: Iterable[Path],
-    output_dir: Path,
-    config: Config,
-) -> List[Path]:
-    """Extrait des frames de menus depuis des fichiers VOB avec ffmpeg."""
-
-    extracted: List[Path] = []
-    if not ensure_tool(config.ffmpeg_bin):
-        logging.warning("ffmpeg (%s) introuvable, extraction des menus ignorée", config.ffmpeg_bin)
-        return extracted
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    for vob in vob_paths:
-        if not vob.exists():
-            continue
-        stem = vob.stem.replace(" ", "_")
-        target_pattern = output_dir / f"{stem}_%03d.png"
-        for existing in output_dir.glob(f"{stem}_*.png"):
-            try:
-                existing.unlink()
-            except OSError:
-                logging.debug("Impossible de supprimer %s", existing)
-        cmd = [
-            config.ffmpeg_bin,
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-i",
-            str(vob),
-            "-vf",
-            f"fps={config.frame_rate_menu_fps}",
-            "-frames:v",
-            str(config.frame_max_menu),
-            str(target_pattern),
-        ]
-        logging.info("Extraction des menus via ffmpeg: %s", " ".join(cmd))
-        try:
-            subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as exc:
-            logging.warning("Extraction ffmpeg échouée pour %s: %s", vob, exc)
-            continue
-
-        for frame_path in sorted(output_dir.glob(f"{stem}_*.png")):
-            extracted.append(frame_path)
-
-    return extracted
-
-
-def list_menu_vobs(raw_dir: Path, config: Config) -> List[Path]:
-    matches: List[Path] = []
-    for pattern in config.menu_vob_patterns:
-        matches.extend(sorted(raw_dir.glob(pattern)))
-    return matches
-
-
-def load_fingerprint(disc_dir: Path) -> Dict[str, object]:
+def load_fingerprint(disc_dir: Path) -> Dict[str, Any]:
     fingerprint_path = disc_dir / "tech" / "fingerprint.json"
-    if fingerprint_path.exists():
+    if not fingerprint_path.exists():
+        return {}
+    try:
+        return json.loads(fingerprint_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        logging.warning("fingerprint.json illisible: %s", exc)
+        return {}
+
+
+def _probe_with_ffprobe(mkv_dir: Path, ffprobe_bin: str) -> Dict[str, Any]:
+    if not shutil.which(ffprobe_bin):
+        return {}
+    titles: List[Dict[str, Any]] = []
+    for index, mkv in enumerate(sorted(mkv_dir.glob("*.mkv")), start=1):
+        cmd = [
+            ffprobe_bin,
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_entries",
+            "format=duration:stream=index,codec_type:tags=language",
+            str(mkv),
+        ]
         try:
-            return json.loads(fingerprint_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logging.warning("Impossible de lire fingerprint.json: %s", exc)
-    return {}
+            proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            logging.warning("ffprobe a échoué pour %s: %s", mkv, exc)
+            continue
+        try:
+            payload = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            logging.warning("ffprobe JSON invalide pour %s: %s", mkv, exc)
+            continue
+        duration = payload.get("format", {}).get("duration")
+        try:
+            duration_value = float(duration) if duration is not None else None
+        except (TypeError, ValueError):
+            duration_value = None
+        audio_langs = []
+        sub_langs = []
+        for stream in payload.get("streams", []):
+            lang = stream.get("tags", {}).get("language")
+            if stream.get("codec_type") == "audio" and lang:
+                audio_langs.append(lang)
+            if stream.get("codec_type") == "subtitle" and lang:
+                sub_langs.append(lang)
+        titles.append(
+            {
+                "index": index,
+                "filename": mkv.name,
+                "runtime_s": duration_value,
+                "audio_langs": audio_langs,
+                "sub_langs": sub_langs,
+            }
+        )
+    if not titles:
+        return {}
+    return {"source": "ffprobe", "titles": titles}
 
 
-def gather_menu_frames(disc_dir: Path, config: Config) -> List[Path]:
-    raw_dir = disc_dir / "raw"
-    if not raw_dir.exists():
-        logging.info("Répertoire raw/ absent, OCR des menus ignoré")
-        return []
+def _merge_structures(lsdvd_data: Dict[str, Any], mkv_data: Dict[str, Any]) -> Dict[str, Any]:
+    if not lsdvd_data and not mkv_data:
+        return {"titles": []}
+    if not lsdvd_data:
+        return mkv_data
+    titles = list(lsdvd_data.get("titles", []))
+    if mkv_data:
+        mkv_lookup = {entry.get("index"): entry for entry in mkv_data.get("titles", [])}
+        for title in titles:
+            idx = title.get("index")
+            match = mkv_lookup.get(idx)
+            if not match:
+                continue
+            for key in ("filename", "audio_langs", "sub_langs", "title"):
+                if match.get(key) and not title.get(key):
+                    title[key] = match.get(key)
+            if not title.get("runtime_s") and match.get("runtime_s"):
+                title["runtime_s"] = match.get("runtime_s")
+    return {"source": lsdvd_data.get("source", "lsdvd"), "titles": titles}
 
-    vobs = list_menu_vobs(raw_dir, config)
-    if not vobs:
-        logging.info("Aucun VOB de menu détecté dans %s", raw_dir)
-        return []
 
-    frames_dir = disc_dir / "meta" / "ocr_frames"
-    return extract_menu_frames(vobs, frames_dir, config)
+def load_mkv_structure(disc_dir: Path, cfg: Config) -> Dict[str, Any]:
+    mkv_dir = disc_dir / "mkv"
+    lsdvd_path = disc_dir / "tech" / "structure.lsdvd.yml"
+
+    lsdvd_data = techparse.parse_lsdvd(lsdvd_path)
+    mkv_data = techparse.probe_mkv_titles(mkv_dir)
+    if not mkv_data:
+        ffprobe_data = _probe_with_ffprobe(mkv_dir, cfg.ffprobe_bin)
+        if ffprobe_data:
+            logging.info("Fallback ffprobe pour l'analyse MKV")
+            mkv_data = ffprobe_data
+    if not lsdvd_data:
+        return mkv_data or {"titles": []}
+    return _merge_structures(lsdvd_data, mkv_data)
+
+
+def collect_menus(disc_dir: Path, cfg: Config) -> Dict[str, Any]:
+    backup_root = disc_dir / "raw" / "VIDEO_TS_BACKUP"
+    frames_dir = disc_dir / "meta" / "menu_frames"
+    ocr_cfg = {
+        "frames_dir": frames_dir,
+        "ffmpeg_bin": cfg.ffmpeg_bin,
+        "tesseract_bin": cfg.tesseract_bin,
+        "ocr_langs": cfg.ocr_langs,
+        "menu_frame_fps": cfg.menu_frame_fps,
+        "menu_max_frames": cfg.menu_max_frames,
+        "menu_scene_mode": cfg.menu_scene_mode,
+        "menu_scene_threshold": cfg.menu_scene_threshold,
+        "menu_preproc_filters": cfg.menu_preproc_filters,
+        "menu_vob_glob": cfg.menu_vob_glob,
+    }
+    items = ocr.collect_menu_texts(backup_root, ocr_cfg)
+    normalized = heuristics.normalize_labels_from_texts(items) if items else {"raw_labels": [], "language": "unknown"}
+    return {
+        "items": items,
+        "normalized": normalized,
+        "menus_dir": str(backup_root / "VIDEO_TS") if (backup_root / "VIDEO_TS").exists() else None,
+        "frames_dir": str(frames_dir),
+        "tools": {"ffmpeg": cfg.ffmpeg_bin, "tesseract": cfg.tesseract_bin},
+    }
 
 
 def main() -> int:
     setup_logging()
-    config = Config.from_env()
+    cfg = Config.from_env()
 
     disc_dir_env = os.environ.get("DISC_DIR")
     if not disc_dir_env:
@@ -168,100 +205,56 @@ def main() -> int:
         return 1
 
     disc_dir = Path(disc_dir_env).resolve()
-    logging.info("Démarrage scan pour %s", disc_dir)
+    logging.info("Analyse OCR/IA pour %s", disc_dir)
 
     if not disc_dir.exists():
-        logging.error("Le répertoire disque %s est introuvable", disc_dir)
+        logging.error("Répertoire disque introuvable: %s", disc_dir)
         return 1
 
     metadata_path = disc_dir / "meta" / "metadata_ia.json"
     if metadata_path.exists():
-        logging.info("metadata_ia.json déjà présent, rien à faire")
+        logging.info("metadata_ia.json déjà présent, idempotence respectée")
         return 0
 
-    (disc_dir / "meta").mkdir(parents=True, exist_ok=True)
+    start = time.time()
 
-    structure_path = disc_dir / "tech" / "structure.lsdvd.yml"
-    structure = {}
-    if structure_path.exists():
-        structure = techparse.parse_lsdvd(structure_path)
-
-    if not structure and config.struct_fallback_from_mkv:
-        mkv_dir = disc_dir / "mkv"
-        if mkv_dir.exists():
-            logging.info("Structure vide, fallback mkvmerge")
-            structure = techparse.probe_mkv_titles(mkv_dir)
-
+    mkv_struct = load_mkv_structure(disc_dir, cfg)
     fingerprint = load_fingerprint(disc_dir)
 
-    frame_paths = gather_menu_frames(disc_dir, config)
-    ocr_results: List[Dict[str, object]] = []
-    normalized_labels: Dict[str, object] = {}
+    menus = collect_menus(disc_dir, cfg)
+    menus["fingerprint"] = fingerprint
 
-    if frame_paths:
-        logging.info("OCR sur %d frames", len(frame_paths))
-        try:
-            ocr_results = ocr.ocr_frames(frame_paths, config.ocr_langs, bin_path=config.ocr_bin)
-            normalized_labels = ocr.normalize_labels(ocr_results)
-        except Exception as exc:  # pylint: disable=broad-except
-            logging.error("Erreur OCR: %s", exc)
-            ocr_results = []
-            normalized_labels = {"raw": [], "categories": {}, "language": "unknown"}
-    else:
-        logging.info("Aucune frame extraite, OCR ignoré")
-        normalized_labels = {"raw": [], "categories": {}, "language": "unknown"}
-
-    main_feature = heuristics.detect_main_feature(structure)
-    mapping = heuristics.map_menu_labels_to_titles(
-        normalized_labels,
-        structure,
-        runtime_tol=config.runtime_tolerance_sec,
-        min_conf=config.confidence_min,
+    ia_result = ai_analyzer.infer_structure_from_menus(
+        ocr_summary=menus,
+        mkv_struct=mkv_struct,
+        fingerprint=fingerprint,
+        cfg={"llm_enable": cfg.llm_enable},
     )
 
-    ia_payload = None
-    start = time.time()
-    try:
-        ia_payload = ai_analyzer.infer_structure(
-            ocr_texts=ocr_results,
-            normalized_labels=normalized_labels,
-            struct=structure,
-            fingerprint=fingerprint,
-            disc_dir=disc_dir,
-            config={
-                "llm_enable": config.llm_enable,
-                "runtime_tol": config.runtime_tolerance_sec,
-            },
-        )
-    except Exception as exc:  # pylint: disable=broad-except
-        logging.error("Erreur IA: %s", exc)
-        ia_payload = {"error": str(exc)}
-    finally:
-        duration = time.time() - start
-        logging.info("Analyse IA terminée en %.2fs", duration)
-
     disc_uid = disc_dir.name
-
     try:
         writers.write_metadata_json(
             out_path=metadata_path,
             disc_uid=disc_uid,
-            struct=structure,
-            labels=normalized_labels,
-            mapping=mapping,
-            main_feature=main_feature,
-            layout_ver=config.archive_layout_version,
-            ia_payload=ia_payload,
-            ocr_results=ocr_results,
-            fingerprint=fingerprint,
+            ocr_summary=menus,
+            mkv_struct=mkv_struct,
+            ia_result=ia_result,
+            layout_ver=cfg.archive_layout_version,
         )
     except Exception as exc:  # pylint: disable=broad-except
-        logging.error("Écriture metadata échouée: %s", exc)
+        logging.error("Impossible d'écrire metadata_ia.json: %s", exc)
         return 1
 
-    logging.info("metadata_ia.json généré pour %s", disc_uid)
+    elapsed = time.time() - start
+    logging.info(
+        "metadata_ia.json généré (%d entrées OCR, modèle %s, %.2fs)",
+        len(menus.get("items", [])),
+        ia_result.get("model"),
+        elapsed,
+    )
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+

@@ -101,6 +101,41 @@ main() {
     exit 41
   fi
 
+  if [[ "$KEEP_MENU_VOBS" -eq 1 && "$MAKEMKV_BACKUP_ENABLE" -eq 1 ]]; then
+    local backup_dir="$dest_dir/raw/VIDEO_TS_BACKUP"
+    local have_backup=0
+    if [[ -d "$backup_dir/VIDEO_TS" ]]; then
+      local pattern
+      for pattern in $MENU_VOB_GLOB; do
+        if compgen -G "$backup_dir/VIDEO_TS/$pattern" >/dev/null 2>&1; then
+          have_backup=1
+          break
+        fi
+      done
+    fi
+    if (( have_backup )); then
+      log_info "Backup menus déjà présent dans $backup_dir"
+    else
+      mkdir -p "$backup_dir"
+      local backup_cmd=("$MAKEMKV_BIN" backup)
+      if [[ -n "${MAKEMKV_BACKUP_OPTS:-}" ]]; then
+        local backup_opts=()
+        # shellcheck disable=SC2086
+        eval "backup_opts=(${MAKEMKV_BACKUP_OPTS})"
+        backup_cmd+=("${backup_opts[@]}")
+      fi
+      backup_cmd+=("disc:0" "$backup_dir")
+      log_info "Commande MakeMKV (backup menus): ${backup_cmd[*]}"
+      if ! "${backup_cmd[@]}" >>"$logfile" 2>&1; then
+        log_warn "Échec du backup menus, voir $logfile"
+      else
+        log_info "Backup menus généré dans $backup_dir"
+      fi
+    fi
+  else
+    log_info "Backup menus désactivé (MAKEMKV_BACKUP_ENABLE=$MAKEMKV_BACKUP_ENABLE, KEEP_MENU_VOBS=$KEEP_MENU_VOBS)"
+  fi
+
   if ! dump_lsdvd_yaml "$dest_dir/tech/structure.lsdvd.yml"; then
     log_warn "Impossible de générer le dump lsdvd"
   fi
