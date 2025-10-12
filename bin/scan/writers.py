@@ -4,71 +4,57 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict
 
 
 def write_metadata_json(
-    out_path: Path,
+    out_path: Path | str,
     disc_uid: str,
-    struct: Dict[str, object],
-    labels: Dict[str, object],
-    mapping: Dict[str, str],
-    main_feature: Optional[Dict[str, object]],
+    ocr_summary: Dict[str, Any],
+    mkv_struct: Dict[str, Any],
+    ia_result: Dict[str, Any],
     layout_ver: str,
-    ia_payload: Optional[Dict[str, object]] = None,
-    ocr_results: Optional[List[Dict[str, object]]] = None,
-    fingerprint: Optional[Dict[str, object]] = None,
 ) -> None:
-    out_path = Path(out_path)
-    ocr_results = ocr_results or []
-    fingerprint = fingerprint or {}
-    inference = (ia_payload or {}).get("inference") if ia_payload else None
-    if not inference:
-        inference = (ia_payload or {}).get("fallback") if ia_payload else None
-    if not inference:
-        inference = {
-            "movie_title": None,
-            "content_type": "autre",
-            "language": "unknown",
-            "menu_labels": [],
-            "mapping": {},
-            "confidence": 0.0,
-        }
+    """Sérialise les résultats OCR + IA dans metadata_ia.json."""
+
+    path = Path(out_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    menus_section = {
+        "normalized": ocr_summary.get("normalized", {}),
+        "items": ocr_summary.get("items", []),
+        "language": (ocr_summary.get("normalized") or {}).get("language", "unknown"),
+    }
+
+    ia_payload = ia_result.get("result", {})
+
+    sources = {
+        "menus_vob_dir": ocr_summary.get("menus_dir"),
+        "frames_dir": ocr_summary.get("frames_dir"),
+        "llm": {
+            "provider": ia_result.get("provider"),
+            "model": ia_result.get("model"),
+            "used": ia_result.get("used_llm", False),
+            "attempts": ia_result.get("attempts", 0),
+            "error": ia_result.get("error"),
+        },
+        "tools": {
+            "ffmpeg": (ocr_summary.get("tools") or {}).get("ffmpeg"),
+            "tesseract": (ocr_summary.get("tools") or {}).get("tesseract"),
+        },
+    }
 
     payload = {
         "disc_uid": disc_uid,
         "layout_version": layout_ver,
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "structure": struct,
-        "menus": {
-            "labels": labels,
-            "frames_used": [entry.get("frame") for entry in ocr_results if entry.get("frame")],
-            "language_detected": labels.get("language", "unknown") if isinstance(labels, dict) else "unknown",
-        },
-        "mapping": mapping,
-        "main_feature": main_feature,
-        "inferred": {
-            "movie_title": inference.get("movie_title"),
-            "content_type": inference.get("content_type", "autre"),
-            "language": inference.get("language", "unknown"),
-            "confidence": inference.get("confidence", 0.0),
-            "source": "ia" if (ia_payload or {}).get("used") else "heuristics",
-        },
-        "sources": {
-            "tech_dump": struct.get("source"),
-            "ocr_dir": str(out_path.parent / "ocr_frames"),
-            "llm": {
-                "provider": (ia_payload or {}).get("provider"),
-                "model": (ia_payload or {}).get("model"),
-                "used": (ia_payload or {}).get("used", False),
-                "error": (ia_payload or {}).get("error"),
-            },
-        },
-        "fingerprint": fingerprint,
+        "menus": menus_section,
+        "mkv": mkv_struct,
+        "analysis": ia_payload,
+        "sources": sources,
+        "raw_llm_responses": ia_result.get("raw_responses", []),
+        "fingerprint": ocr_summary.get("fingerprint", {}),
     }
 
-    payload["inferred"]["menu_labels"] = inference.get("menu_labels", [])
-    payload["inferred"]["mapping"] = inference.get("mapping", {})
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
