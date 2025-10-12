@@ -1,0 +1,11 @@
+# /etc/systemd/system/dvdarchiver-scan-consumer.path
+[Unit]
+Description=Détection des archives prêtes pour scan IA
+
+[Path]
+EnvironmentFile=/etc/dvdarchiver.conf
+PathExistsGlob=%E{SCAN_TRIGGER_GLOB}
+Unit=dvdarchiver-scan-consumer.service
+
+[Install]
+WantedBy=multi-user.target
