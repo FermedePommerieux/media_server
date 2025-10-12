@@ -1,4 +1,4 @@
-"""Clients LLM pour l'analyse IA."""
+"""Gestion des fournisseurs LLM."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from typing import Optional
 
 try:
     import requests
-except ImportError:  # pragma: no cover - requests optionnel
+except ImportError:  # pragma: no cover - bibliothèque optionnelle
     requests = None  # type: ignore
 
 
@@ -22,12 +22,12 @@ DEFAULT_TEMPERATURE = 0.2
 
 @dataclass
 class LLMConfig:
-    provider: str
-    model: str
-    endpoint: str
-    api_key: str
-    timeout: int
-    temperature: float
+    provider: str = DEFAULT_PROVIDER
+    model: str = DEFAULT_MODEL
+    endpoint: str = DEFAULT_ENDPOINT
+    api_key: str = ""
+    timeout: int = DEFAULT_TIMEOUT
+    temperature: float = DEFAULT_TEMPERATURE
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -42,7 +42,7 @@ class LLMConfig:
 
 
 class LLMClient:
-    """Interface simple de complétion."""
+    """Interface minimale pour interroger un modèle de langage."""
 
     def complete(self, prompt: str) -> str:  # pragma: no cover - interface
         raise NotImplementedError
@@ -56,17 +56,19 @@ class OllamaClient(LLMClient):
     def complete(self, prompt: str) -> str:
         if not requests:
             raise RuntimeError("Le module requests est requis pour OllamaClient")
-        url = f"{self.endpoint}/api/generate"
         payload = {
             "model": self.cfg.model,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": self.cfg.temperature},
         }
-        logging.debug("Appel Ollama %s", url)
+        url = f"{self.endpoint}/api/generate"
+        logging.debug("Appel Ollama POST %s", url)
         response = requests.post(url, json=payload, timeout=self.cfg.timeout)
         response.raise_for_status()
         data = response.json()
+        if "response" not in data:
+            raise RuntimeError("Réponse Ollama invalide: champ 'response' manquant")
         return str(data.get("response", ""))
 
 
@@ -78,7 +80,6 @@ class OpenAIClient(LLMClient):
     def complete(self, prompt: str) -> str:
         if not requests:
             raise RuntimeError("Le module requests est requis pour OpenAIClient")
-        url = f"{self.endpoint}/chat/completions"
         headers = {"Content-Type": "application/json"}
         if self.cfg.api_key:
             headers["Authorization"] = f"Bearer {self.cfg.api_key}"
@@ -86,33 +87,36 @@ class OpenAIClient(LLMClient):
             "model": self.cfg.model,
             "temperature": self.cfg.temperature,
             "messages": [
-                {"role": "system", "content": "Tu es un assistant d'analyse de menus DVD."},
+                {"role": "system", "content": "Tu es un expert des métadonnées vidéo."},
                 {"role": "user", "content": prompt},
             ],
         }
-        logging.debug("Appel OpenAI %s", url)
+        url = f"{self.endpoint}/chat/completions"
+        logging.debug("Appel OpenAI POST %s", url)
         response = requests.post(url, headers=headers, json=payload, timeout=self.cfg.timeout)
         response.raise_for_status()
         data = response.json()
-        choice = data.get("choices", [{}])[0]
-        message = choice.get("message", {}).get("content", "")
+        try:
+            message = data["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:  # pragma: no cover - dépend du fournisseur
+            raise RuntimeError(f"Réponse OpenAI invalide: {data}") from exc
         return str(message)
 
 
 class MockClient(LLMClient):
     def __init__(self, cfg: Optional[LLMConfig] = None) -> None:
-        self.cfg = cfg or LLMConfig(DEFAULT_PROVIDER, "mock", "", "", 5, 0.0)
+        self.cfg = cfg or LLMConfig()
 
     def complete(self, prompt: str) -> str:  # pragma: no cover - trivial
-        logging.info("Mock LLM utilisé (pas d'appel réseau)")
+        logging.info("Client LLM fictif utilisé, retour statique")
         return json.dumps(
             {
                 "movie_title": None,
                 "content_type": "autre",
                 "language": "unknown",
-                "menu_labels": [],
+                "items": [],
                 "mapping": {},
-                "confidence": 0.1,
+                "confidence": 0.0,
                 "source": "mock",
             }
         )

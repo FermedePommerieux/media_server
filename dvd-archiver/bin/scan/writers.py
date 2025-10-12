@@ -1,91 +1,74 @@
-"""Écriture des métadonnées finales."""
+"""Écriture du fichier metadata_ia.json."""
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict
 
-
-def _enrich_titles(titles: Iterable[Dict[str, object]]) -> List[Dict[str, object]]:
-    enriched: List[Dict[str, object]] = []
-    for idx, title in enumerate(titles):
-        entry = dict(title)
-        entry.setdefault("id", f"title_{idx + 1}")
-        entry.setdefault("index", title.get("index", idx))
-        entry.setdefault("runtime_s", float(title.get("runtime_s", 0.0) or 0.0))
-        entry.setdefault("chapters", title.get("chapters", 0))
-        entry.setdefault("audio_langs", title.get("audio_langs", []))
-        entry.setdefault("sub_langs", title.get("sub_langs", []))
-        entry.setdefault("angles", title.get("angles", 0))
-        enriched.append(entry)
-    return enriched
-
-
-def _detect_ocr_dir(ocr_results: List[Dict[str, object]]) -> Optional[str]:
-    for entry in ocr_results:
-        frame = entry.get("frame")
-        if frame:
-            return str(Path(frame).resolve().parent)
-    return None
+try:  # compat exécution directe
+    from .heuristics import HeuristicHints  # type: ignore
+    from .ai_analyzer import AIInference  # type: ignore
+except ImportError:  # pragma: no cover - fallback
+    from heuristics import HeuristicHints  # type: ignore
+    from ai_analyzer import AIInference  # type: ignore
 
 
 def write_metadata_json(
     out_path: Path,
     disc_uid: str,
     layout_version: str,
-    struct: Dict[str, object],
-    labels: Dict[str, object],
-    mapping: Dict[str, str],
-    ia_payload: Dict[str, object],
-    ocr_results: List[Dict[str, object]],
+    mkv_struct: Dict[str, object],
     fingerprint: Dict[str, object],
-    total_time: float,
+    hints: HeuristicHints,
+    ai_inference: AIInference,
+    fallback_payload: Dict[str, object],
     llm_enabled: bool,
+    total_time: float,
 ) -> None:
-    """Écrit le fichier metadata_ia.json avec les informations consolidées."""
-
-    titles = _enrich_titles(struct.get("titles", []) if isinstance(struct, dict) else [])
-    inferred_title = ia_payload.get("movie_title") if isinstance(ia_payload, dict) else None
-    inferred_type = ia_payload.get("content_type") if isinstance(ia_payload, dict) else "autre"
-    inferred_lang = ia_payload.get("language") if isinstance(ia_payload, dict) else labels.get("language", "unknown")
-    inferred_conf = ia_payload.get("confidence") if isinstance(ia_payload, dict) else 0.0
-    provider = ia_payload.get("source") if isinstance(ia_payload, dict) else "heuristics"
-    model = ia_payload.get("model") if isinstance(ia_payload, dict) else None
+    files = mkv_struct.get("files", []) if isinstance(mkv_struct, dict) else []
+    inferred = ai_inference.parsed or fallback_payload
+    inferred = dict(inferred)
+    inferred.setdefault("items", fallback_payload.get("items", []))
+    inferred.setdefault("mapping", fallback_payload.get("mapping", {}))
 
     payload = {
         "disc_uid": disc_uid,
         "layout_version": layout_version,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(),
         "processing_time_sec": round(total_time, 3),
-        "inferred": {
-            "title": inferred_title,
-            "content_type": inferred_type,
-            "language": inferred_lang,
-            "confidence": inferred_conf,
-            "source": provider,
-            "model": model,
-        },
-        "structure": {
-            "source": struct.get("source", "unknown") if isinstance(struct, dict) else "unknown",
-            "titles": titles,
-        },
-        "menus": {
-            "labels": labels,
-            "frames_used": [entry.get("frame") for entry in ocr_results if entry.get("frame")],
-        },
-        "mapping": mapping,
         "fingerprint": fingerprint,
+        "inferred": {
+            "movie_title": inferred.get("movie_title"),
+            "content_type": inferred.get("content_type", "autre"),
+            "language": inferred.get("language", "unknown"),
+            "confidence": float(inferred.get("confidence", 0.0)),
+            "source": inferred.get("source", "ia" if ai_inference.parsed else "heuristics"),
+            "model": inferred.get("model"),
+        },
+        "items": inferred.get("items", []),
+        "mapping": inferred.get("mapping", {}),
+        "files": files,
+        "hints": hints.as_dict(),
         "sources": {
-            "tech": struct.get("source", "unknown") if isinstance(struct, dict) else "unknown",
-            "ocr_dir": _detect_ocr_dir(ocr_results),
+            "mkv_probe": {
+                "tool": mkv_struct.get("tool"),
+                "version": mkv_struct.get("tool_version"),
+                "errors": mkv_struct.get("errors", []),
+            },
             "llm": {
                 "enabled": llm_enabled,
-                "provider": provider,
-                "model": model,
+                "attempts": ai_inference.attempts,
+                "provider": ai_inference.parsed.get("source") if ai_inference.parsed else fallback_payload.get("source"),
+                "model": ai_inference.parsed.get("model") if ai_inference.parsed else fallback_payload.get("model"),
             },
         },
     }
+
+    if ai_inference.raw_response is not None:
+        payload["sources"]["llm"]["raw_response"] = ai_inference.raw_response
+    if ai_inference.prompt:
+        payload["sources"]["llm"]["prompt"] = ai_inference.prompt
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

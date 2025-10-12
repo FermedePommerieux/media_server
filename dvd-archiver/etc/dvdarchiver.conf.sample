@@ -1,29 +1,26 @@
-# Configuration DVD Archiver - Phase 2 Scan & IA
-# Copiez ce fichier vers /etc/dvdarchiver.conf et ajustez les valeurs si nécessaire.
+# Configuration DVD Archiver - Phase 2 (Scan MKV + IA)
+# Copier vers /etc/dvdarchiver.conf puis adapter les chemins.
 
-# --- Phase 1 (rappel utile) ---
+# --- Phase 1 (rappel) ---
 DEST="/mnt/media_master"
 
-# --- Phase 2: Scan & OCR ---
+# --- Phase 2: Scan ONLY-MKV ---
 SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
 SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
-SCAN_TRIGGER_GLOB="${DEST:-/mnt/media_master}/*/mkv/title*.mkv"
 
-# OCR / vidéo
-FFMPEG_BIN="ffmpeg"
-FFPROBE_BIN="ffprobe"
-OCR_BIN="tesseract"
-OCR_LANGS="eng+fra+spa+ita+deu"
-FRAME_RATE_MENU_FPS=1
-FRAME_MAX_MENU=30
-MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
-STRUCT_FALLBACK_FROM_MKV=1
+# Détection d'archives prêtes (présence d'au moins un .mkv)
+SCAN_TRIGGER_GLOB="${DEST:-/mnt/media_master}/*/mkv/*.mkv"
+
+# Extraction métadonnées MKV
+MKVMERGE_BIN="mkvmerge"      # pour mkvmerge -J (JSON)
+MEDIAINFO_BIN="mediainfo"    # fallback (optionnel)
 
 # Heuristiques & seuils
 RUNTIME_TOLERANCE_SEC=120
-CONFIDENCE_MIN=0.50
+EPISODE_GROUP_MIN=2
+MAIN_FEATURE_MINUTES=60
 
-# --- IA / LLM (par défaut : Qwen2.5-14B via Ollama) ---
+# --- IA / LLM (OBLIGATOIRE) ---
 LLM_ENABLE=1
 LLM_PROVIDER="ollama"
 LLM_ENDPOINT="http://127.0.0.1:11434"

@@ -1,10 +1,10 @@
-# Unités systemd – Phase 2 (Scan + IA)
+# Unités systemd – Phase 2 (Scan MKV + IA)
 
 Ces unités assurent la consommation de la file de scan et l'analyse IA des disques rippés.
 
 ## Fichiers
 
-- `dvdarchiver-scan-consumer.service` : lance `scan_consumer.sh` qui dépile les jobs et appelle `scanner.py`.
+- `dvdarchiver-scan-consumer.service` : lance `scan_consumer.sh` qui dépile les jobs et appelle `scanner.py` (analyse MKV uniquement).
 - `dvdarchiver-scan-consumer.path` : surveille le motif configuré (`SCAN_TRIGGER_GLOB`) et démarre le service dès qu'un MKV est présent.
 
 Les deux unités attendent que la configuration `/etc/dvdarchiver.conf` fournisse les chemins (file, destination, modèle IA, etc.).

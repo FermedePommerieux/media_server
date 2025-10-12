@@ -9,6 +9,7 @@ fi
 
 DEST="${DEST:-/mnt/media_master}"
 SCAN_QUEUE_DIR="${SCAN_QUEUE_DIR:-/var/spool/dvdarchiver-scan}"
+SCAN_TRIGGER_GLOB="${SCAN_TRIGGER_GLOB:-${DEST:-/mnt/media_master}/*/mkv/*.mkv}"
 
 log() {
   printf '[scan_enqueue] %s\n' "$*"
@@ -29,6 +30,19 @@ disc_dir="$1"
 if [[ ! -d "$disc_dir" ]]; then
   echo "Répertoire disque introuvable: $disc_dir" >&2
   exit 1
+fi
+
+if [[ ! -d "$disc_dir/mkv" ]]; then
+  log "Répertoire mkv/ absent pour $disc_dir, aucune mise en file"
+  exit 0
+fi
+
+shopt -s nullglob
+mkv_files=("$disc_dir"/mkv/*.mkv)
+shopt -u nullglob
+if [[ ${#mkv_files[@]} -eq 0 ]]; then
+  log "Aucun MKV détecté dans $disc_dir/mkv, fichier ignoré"
+  exit 0
 fi
 
 if ! mkdir -p "$SCAN_QUEUE_DIR"; then

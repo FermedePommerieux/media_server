@@ -128,18 +128,14 @@ SUMMARY
 }
 
 main() {
-  log "Installation Phase 2 (scan + OCR + IA)"
+  log "Installation Phase 2 (scan MKV + IA)"
 
   check_dep python3
-  check_dep pip3
-  check_dep tesseract
-  check_dep ffmpeg
-  check_dep ffprobe
-  check_dep lsdvd
   check_dep mkvmerge
+  check_dep mediainfo
+  check_dep curl
 
   install_ollama
-  # Peut définir LLM_MODEL via configuration après sourcing
   if [[ -f "${CONFIG_FILE}" ]]; then
     # shellcheck disable=SC1091
     source "${CONFIG_FILE}"

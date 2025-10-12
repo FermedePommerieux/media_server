@@ -1,6 +1,6 @@
-# Phase 2 – Scan + OCR + IA
+# Phase 2 – Scan MKV + IA
 
-Cette phase analyse les disques déjà rippés pour produire `meta/metadata_ia.json` en combinant informations techniques, OCR des menus et raisonnement IA (LLM par défaut via Ollama / Qwen2.5-14B-Instruct Q4).
+La phase 2 traite uniquement les fichiers MKV produits par la phase 1. Les métadonnées techniques (`mkv/*.mkv` + `tech/fingerprint.json`) sont analysées pour produire `meta/metadata_ia.json` à l'aide d'heuristiques et d'un LLM (Qwen2.5-14B-Instruct Q4 via Ollama par défaut).
 
 ## Flux global
 
@@ -8,16 +8,16 @@ Cette phase analyse les disques déjà rippés pour produire `meta/metadata_ia.j
 [scan_enqueue.sh] -> file d'attente (${SCAN_QUEUE_DIR}) -> [scan_consumer.sh] -> scanner.py -> meta/metadata_ia.json
 ```
 
-1. **Enqueue** : `scan_enqueue.sh` ajoute un job par disque à scanner (idempotent, ignorer si `meta/metadata_ia.json` existe).
-2. **Consumer** : `scan_consumer.sh` lit la file, appelle `scanner.py` et journalise dans `${SCAN_LOG_DIR}`.
-3. **Scanner** : `scanner.py` orchestre parsing technique (`techparse`), extraction/ocr des menus, heuristiques et appel IA (`ai_analyzer`).
-4. **Écriture** : `writers.write_metadata_json` consolide les données, y compris la provenance (LLM utilisé, temps de traitement, etc.).
+1. **Enqueue** : `scan_enqueue.sh` vérifie la présence d'au moins un MKV et ajoute un job idempotent (ignore si `meta/metadata_ia.json` existe déjà).
+2. **Consumer** : `scan_consumer.sh` dépile les jobs, lance `scanner.py` et redirige les logs vers `${SCAN_LOG_DIR}` et le journal systemd.
+3. **Scanner** : `scanner.py` collecte les métadonnées MKV (`mkvmerge -J`, fallback `mediainfo`), applique des heuristiques (durées, langues) puis interroge le LLM pour nommer le contenu, typer (film/série/compilation) et mapper chaque fichier à un élément logique.
+4. **Écriture** : `writers.write_metadata_json` consolide la sortie IA, les heuristiques et les sources (versions outils, prompts, réponse brute) dans `meta/metadata_ia.json`.
 
 ## Dépendances
 
-- Python ≥ 3.10 (modules `requests`, `pytesseract`, `Pillow`, `PyYAML`).
-- Binaires : `tesseract-ocr`, `ffmpeg`, `ffprobe`, `lsdvd`, `mkvmerge`.
-- Ollama (service `ollama.service`) pour tirer/servir `qwen2.5:14b-instruct-q4_K_M` (configurable).
+- **Python ≥ 3.10** (bibliothèque standard + `requests`).
+- **Binaires** : `mkvmerge` (obligatoire), `mediainfo` (fallback optionnel), `curl` (pour récupérer Ollama).
+- **LLM** : Ollama avec le modèle `qwen2.5:14b-instruct-q4_K_M` (configurable via `/etc/dvdarchiver.conf`).
 
 ## Installation rapide
 
@@ -29,27 +29,29 @@ sudo ./install.sh
 
 Le script :
 
-- vérifie les dépendances,
-- installe Ollama si besoin puis `ollama pull qwen2.5:14b-instruct-q4_K_M`,
+- vérifie les dépendances principales,
+- installe Ollama si nécessaire puis tente `ollama pull qwen2.5:14b-instruct-q4_K_M`,
 - copie les scripts dans `/usr/local/bin/` (`scan_enqueue.sh`, `scan_consumer.sh`, `scan/scanner.py`, ...),
-- crée les répertoires `${DEST}`, `${SCAN_QUEUE_DIR}`, `${SCAN_LOG_DIR}` avec valeurs par défaut (`DEST=/mnt/media_master`),
+- crée `${DEST}`, `${SCAN_QUEUE_DIR}`, `${SCAN_LOG_DIR}` selon la configuration (valeurs par défaut si non définies),
 - installe `/etc/dvdarchiver.conf` si absent et active `dvdarchiver-scan-consumer.path`.
 
 ## Configuration
 
-Toutes les valeurs sont lues dans `/etc/dvdarchiver.conf` (copie de `etc/dvdarchiver.conf.sample`). Extraits importants :
+Les scripts sourcent `/etc/dvdarchiver.conf` (format `VAR=VALUE`). Extraits utiles :
 
 ```bash
 DEST="/mnt/media_master"
 SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
 SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
+MKVMERGE_BIN="mkvmerge"
+MEDIAINFO_BIN="mediainfo"
 LLM_PROVIDER="ollama"
 LLM_MODEL="qwen2.5:14b-instruct-q4_K_M"
 LLM_ENDPOINT="http://127.0.0.1:11434"
 LLM_ENABLE=1
 ```
 
-Surcharger via variables d'environnement au besoin (`LLM_PROVIDER`, `LLM_MODEL`, `LLM_ENDPOINT`, `LLM_API_KEY`, etc.). Mettre `LLM_ENABLE=0` pour désactiver l'IA et n'utiliser que les heuristiques.
+Les valeurs peuvent être surchargées via l'environnement au moment de l'exécution.
 
 ## Test rapide
 
@@ -59,12 +61,12 @@ journalctl -u dvdarchiver-scan-consumer.service -f
 cat "${DEST}/<DISC_UID>/meta/metadata_ia.json"
 ```
 
-Le premier appel place un job (si aucun `metadata_ia.json`). `journalctl` permet de suivre l'exécution, puis vérifier le fichier généré.
+Le job n'est créé que si des MKV sont présents et si `meta/metadata_ia.json` est absent. Les journaux détaillent l'analyse (heuristiques, prompt IA, éventuelles erreurs).
 
 ## Dépannage
 
-- **Pas de menus VOB (`raw/`)** : le scanner basculera sur `STRUCT_FALLBACK_FROM_MKV=1` et utilisera `mkvmerge -J` pour récupérer les durées.
-- **LLM indisponible** : si Ollama ou le modèle ne répond pas, l'analyse retombe sur `heuristics.fallback_payload` avec un marquage `source="heuristics"`.
-- **Tesseract absent** : `install.sh` avertit et l'OCR retournera un texte vide, mais le pipeline continue avec heuristiques/IA.
-- **File saturée** : `scan_consumer.sh` garde une trace `.done`/`.err` pour chaque job et envoie la sortie dans `${SCAN_LOG_DIR}` + journal systemd.
+- **`mkvmerge` manquant** : l'installation échouera, installez `mkvtoolnix` puis relancez.
+- **IA indisponible** : `scanner.py` tente l'appel LLM et, en cas d'échec, produit malgré tout un JSON heuristique minimal (labels génériques, confiance basse).
+- **`metadata_ia.json` déjà présent** : l'outil reste idempotent et ne relance pas l'analyse.
+- **Absence de MKV** : `scan_enqueue.sh` et `scanner.py` arrêtent le traitement en signalant l'absence d'entrées valides.
 

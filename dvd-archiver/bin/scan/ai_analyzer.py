@@ -1,79 +1,186 @@
-"""Analyse IA des structures DVD."""
+"""Interface avec le LLM pour déduire les métadonnées logiques."""
 from __future__ import annotations
 
 import json
 import logging
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import Dict, Optional
 
-import ai_providers
+try:  # compat exécution directe
+    from . import ai_providers  # type: ignore
+    from .heuristics import HeuristicHints  # type: ignore
+except ImportError:  # pragma: no cover - fallback script
+    import ai_providers  # type: ignore
+    from heuristics import HeuristicHints  # type: ignore
+
+
+@dataclass
+class AIInference:
+    prompt: str
+    raw_response: Optional[str]
+    parsed: Optional[Dict[str, object]]
+    attempts: int
+
+
+def _serialise_files(mkv_struct: Dict[str, object]) -> str:
+    files = mkv_struct.get("files", []) if isinstance(mkv_struct, dict) else []
+    serialisable = []
+    for entry in files:
+        serialisable.append(
+            {
+                "file": entry.get("file"),
+                "duration_s": entry.get("duration_s"),
+                "audio_langs": entry.get("audio_langs"),
+                "sub_langs": entry.get("sub_langs"),
+                "container_title": entry.get("container_title"),
+                "track_titles": entry.get("track_titles"),
+                "size_bytes": entry.get("size_bytes"),
+            }
+        )
+    return json.dumps(serialisable, ensure_ascii=False)
 
 
 def _build_prompt(
-    ocr_texts: List[Dict[str, object]],
-    normalized_labels: Dict[str, object],
-    struct: Dict[str, object],
+    mkv_struct: Dict[str, object],
     fingerprint: Dict[str, object],
+    hints: HeuristicHints,
 ) -> str:
-    schema = """
-Tu dois répondre avec un JSON strict respectant exactement ce schéma :
-{
-  "movie_title": "string|null",
-  "content_type": "film|serie|autre",
-  "language": "fr|en|es|de|it|...|unknown",
-  "menu_labels": ["Play","Chapters","Subtitles","Bonus"],
-  "mapping": {"title_1":"Main Feature","title_2":"Bonus: Making Of"},
-  "confidence": 0.0
-}
-""".strip()
-
-    prompt = (
-        "Tu es un assistant expert en DVD. Analyse les données OCR, la structure technique et les empreintes pour déduire la nature du contenu.\n"
-        "Consignes :\n"
-        "- Travaille en français.\n"
-        "- Si l'information manque, reste prudent et baisse la confiance.\n"
-        "- Ne devine pas de titre inventé.\n"
-        f"{schema}\n"
-        "Données OCR (liste de textes avec confiance) :\n"
-        f"{json.dumps(ocr_texts, ensure_ascii=False)}\n"
-        "Labels normalisés :\n"
-        f"{json.dumps(normalized_labels, ensure_ascii=False)}\n"
-        "Structure technique (durées, langues) :\n"
-        f"{json.dumps(struct, ensure_ascii=False)}\n"
-        "Empreinte disque :\n"
-        f"{json.dumps(fingerprint, ensure_ascii=False)}\n"
-        "Réponds uniquement avec le JSON demandé."
+    schema = (
+        "Réponds uniquement avec un JSON strict respectant exactement ce format :\n"
+        "{\n"
+        "  \"movie_title\": \"string|null\",\n"
+        "  \"content_type\": \"film|serie|autre\",\n"
+        "  \"language\": \"code langue principal ou unknown\",\n"
+        "  \"items\": [\n"
+        "    {\"file\": \"nom.mkv\", \"label\": \"titre humain\", \"order\": 1}\n"
+        "  ],\n"
+        "  \"mapping\": {\"nom.mkv\": \"label\"},\n"
+        "  \"confidence\": 0.0\n"
+        "}\n"
+        "Aucune explication, aucun texte avant ou après."
     )
-    return prompt
+    files_json = _serialise_files(mkv_struct)
+    fingerprint_json = json.dumps(fingerprint or {}, ensure_ascii=False)
+    hints_json = json.dumps(hints.as_dict(), ensure_ascii=False)
+    return (
+        "Tu es un expert d'archives vidéo. Analyse uniquement les métadonnées techniques des fichiers MKV fournis.\n"
+        "Déduis le titre du contenu (film ou série), la langue principale et la correspondance fichiers -> éléments logiques.\n"
+        "Consignes :\n"
+        "- Pas d'invention : si le titre est inconnu, retourne null.\n"
+        "- Utilise les durées pour distinguer film principal, épisodes ou bonus.\n"
+        "- Utilise les langues de pistes pour proposer la langue principale.\n"
+        "- Respecte l'ordre logique (principal en premier).\n"
+        "- Utilise la sortie heuristique comme simple indice, pas comme vérité absolue.\n"
+        f"{schema}\n"
+        f"Empreinte disque : {fingerprint_json}\n"
+        f"Fichiers MKV : {files_json}\n"
+        f"Indices heuristiques : {hints_json}\n"
+        "Réponds maintenant avec le JSON demandé."
+    )
 
 
-def infer_structure(
-    ocr_texts: List[Dict[str, object]],
-    normalized_labels: Dict[str, object],
-    struct: Dict[str, object],
+def _validate_payload(payload: Dict[str, object], files: Dict[str, Dict[str, object]]) -> Dict[str, object]:
+    result = dict(payload)
+    movie_title = result.get("movie_title")
+    if movie_title is not None and not isinstance(movie_title, str):
+        result["movie_title"] = None
+
+    content_type = result.get("content_type", "autre")
+    if content_type not in {"film", "serie", "autre"}:
+        result["content_type"] = "autre"
+
+    language = result.get("language", "unknown")
+    if not isinstance(language, str) or not language:
+        result["language"] = "unknown"
+
+    mapping = result.get("mapping")
+    if not isinstance(mapping, dict):
+        mapping = {}
+    cleaned_mapping = {}
+    for key, value in mapping.items():
+        if key in files and isinstance(value, str):
+            cleaned_mapping[key] = value
+    result["mapping"] = cleaned_mapping
+
+    items = result.get("items")
+    if not isinstance(items, list):
+        items = []
+    cleaned_items = []
+    seen_files = set()
+    for idx, item in enumerate(items, start=1):
+        file_name = item.get("file") if isinstance(item, dict) else None
+        label = item.get("label") if isinstance(item, dict) else None
+        order = item.get("order") if isinstance(item, dict) else idx
+        if file_name in files and isinstance(label, str):
+            cleaned_items.append({"file": file_name, "label": label, "order": int(order) if isinstance(order, int) else idx})
+            seen_files.add(file_name)
+    # Complète avec les fichiers manquants pour assurer une correspondance totale
+    missing = [name for name in files if name not in seen_files]
+    next_order = len(cleaned_items) + 1
+    for name in missing:
+        label = cleaned_mapping.get(name) or f"Item {next_order}"
+        cleaned_items.append({"file": name, "label": label, "order": next_order})
+        cleaned_mapping.setdefault(name, label)
+        next_order += 1
+
+    cleaned_items.sort(key=lambda entry: entry.get("order", 0))
+    result["items"] = cleaned_items
+    result["mapping"] = cleaned_mapping
+
+    confidence = result.get("confidence")
+    try:
+        result["confidence"] = float(confidence)
+    except (TypeError, ValueError):
+        result["confidence"] = 0.0
+
+    return result
+
+
+def infer_from_mkv(
+    mkv_struct: Dict[str, object],
     fingerprint: Dict[str, object],
-) -> Dict[str, object] | None:
-    """Appelle le LLM configuré pour analyser la structure."""
-
+    hints: HeuristicHints,
+    llm_enabled: bool,
+) -> AIInference:
     cfg = ai_providers.LLMConfig.from_env()
     client = ai_providers.build_client(cfg)
-    prompt = _build_prompt(ocr_texts, normalized_labels, struct, fingerprint)
-    logging.info(
-        "Appel IA via %s (modèle=%s, endpoint=%s)", cfg.provider, cfg.model, cfg.endpoint
-    )
-    raw_response = client.complete(prompt)
-    logging.debug("Réponse brute IA: %s", raw_response)
+    prompt = _build_prompt(mkv_struct, fingerprint, hints)
+    logging.info("Appel IA via %s (modèle=%s)", cfg.provider, cfg.model)
 
-    try:
-        payload = json.loads(raw_response)
-    except json.JSONDecodeError as exc:
-        logging.error("Réponse IA invalide: %s", exc)
-        return None
+    files_dict = {entry.get("file"): entry for entry in mkv_struct.get("files", [])}
+    if not files_dict:
+        return AIInference(prompt=prompt, raw_response=None, parsed=None, attempts=0)
 
-    if not isinstance(payload, dict):
-        logging.error("Réponse IA inattendue (type %s)", type(payload))
-        return None
+    if not llm_enabled:
+        logging.info("LLM désactivé, aucun appel effectué")
+        return AIInference(prompt=prompt, raw_response=None, parsed=None, attempts=0)
 
-    payload.setdefault("source", cfg.provider)
-    payload.setdefault("model", cfg.model)
-    return payload
+    attempts = 0
+    raw_response: Optional[str] = None
+    parsed: Optional[Dict[str, object]] = None
+    while attempts < 2 and parsed is None:
+        attempts += 1
+        current_prompt = prompt if attempts == 1 else prompt + "\nRespecte strictement le format JSON sans texte additionnel."
+        try:
+            raw_response = client.complete(current_prompt)
+        except Exception as exc:  # pylint: disable=broad-except
+            logging.error("Appel LLM échoué (tentative %d): %s", attempts, exc)
+            raw_response = None
+            break
+        if raw_response is None:
+            break
+        logging.debug("Réponse IA (tentative %d): %s", attempts, raw_response)
+        try:
+            candidate = json.loads(raw_response)
+        except json.JSONDecodeError as exc:
+            logging.warning("JSON IA invalide (tentative %d): %s", attempts, exc)
+            continue
+        if not isinstance(candidate, dict):
+            logging.warning("Réponse IA inattendue (type %s)", type(candidate))
+            continue
+        parsed = _validate_payload(candidate, files_dict)
+        parsed.setdefault("source", cfg.provider)
+        parsed.setdefault("model", cfg.model)
+
+    return AIInference(prompt=prompt, raw_response=raw_response, parsed=parsed, attempts=attempts)
 

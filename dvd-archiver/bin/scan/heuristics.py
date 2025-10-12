@@ -1,145 +1,152 @@
-"""Heuristiques pour la détection de structure DVD."""
+"""Heuristiques basées sur les durées MKV pour inférer la nature du contenu."""
 from __future__ import annotations
 
-import logging
-from typing import Dict, List
+from collections import defaultdict
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Sequence
 
 
-DEFAULT_RUNTIME_TOLERANCE = 120.0
+@dataclass
+class HeuristicConfig:
+    runtime_tolerance_sec: float = 120.0
+    episode_group_min: int = 2
+    main_feature_minutes: int = 60
 
 
-def detect_main_feature(struct: Dict[str, object], runtime_tol: float = DEFAULT_RUNTIME_TOLERANCE) -> Dict[str, object]:
-    """Détecte le ou les titres principaux selon la durée."""
+@dataclass
+class HeuristicHints:
+    kind: str
+    main_feature: Optional[Dict[str, object]]
+    episode_buckets: List[Dict[str, object]]
+    language_hint: Optional[str]
 
-    titles = struct.get("titles", []) if isinstance(struct, dict) else []
-    if not titles:
-        return {"mode": "unknown", "main_positions": [], "main_runtime": 0.0}
+    def as_dict(self) -> Dict[str, object]:
+        return {
+            "kind": self.kind,
+            "main_feature": self.main_feature,
+            "episode_buckets": self.episode_buckets,
+            "language_hint": self.language_hint,
+        }
 
+
+def _durations(files: Sequence[Dict[str, object]]) -> List[float]:
     durations: List[float] = []
-    for title in titles:
+    for entry in files:
         try:
-            durations.append(float(title.get("runtime_s", 0.0)))
+            durations.append(float(entry.get("duration_s", 0.0) or 0.0))
         except (TypeError, ValueError):
-            durations.append(0.0)
+            continue
+    return durations
+
+
+def guess_kind(files: Sequence[Dict[str, object]], cfg: HeuristicConfig) -> str:
+    durations = _durations(files)
     if not durations:
-        return {"mode": "unknown", "main_positions": [], "main_runtime": 0.0}
+        return "autre"
 
-    max_runtime = max(durations)
-    main_positions = [idx for idx, value in enumerate(durations) if abs(value - max_runtime) <= runtime_tol]
+    longest = max(durations)
+    long_count = sum(1 for value in durations if abs(value - longest) <= cfg.runtime_tolerance_sec)
 
-    if len(main_positions) > 1:
-        mode = "series"
-    else:
-        mode = "single"
+    if len(files) == 1:
+        return "film" if longest >= cfg.main_feature_minutes * 60 else "autre"
 
+    buckets = episode_buckets(files, cfg)
+    if any(len(bucket.get("files", [])) >= cfg.episode_group_min for bucket in buckets):
+        return "serie"
+
+    if longest >= cfg.main_feature_minutes * 60 and long_count == 1:
+        return "film"
+
+    return "autre"
+
+
+def pick_main_feature(files: Sequence[Dict[str, object]]) -> Optional[Dict[str, object]]:
+    if not files:
+        return None
+    best = max(files, key=lambda entry: float(entry.get("duration_s", 0.0) or 0.0))
     return {
-        "mode": mode,
-        "main_positions": main_positions,
-        "main_runtime": max_runtime,
+        "file": best.get("file"),
+        "duration_s": float(best.get("duration_s", 0.0) or 0.0),
     }
 
 
-def _title_key(position: int) -> str:
-    return f"title_{position + 1}"
+def episode_buckets(files: Sequence[Dict[str, object]], cfg: HeuristicConfig) -> List[Dict[str, object]]:
+    durations = _durations(files)
+    if not durations:
+        return []
+
+    buckets: Dict[int, Dict[str, object]] = {}
+    for entry in files:
+        try:
+            duration = float(entry.get("duration_s", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            continue
+        if duration <= 0:
+            continue
+        key = int(round(duration / cfg.runtime_tolerance_sec)) if cfg.runtime_tolerance_sec else int(duration)
+        bucket = buckets.setdefault(key, {"duration_mean_s": 0.0, "files": []})
+        bucket["files"].append(entry.get("file"))
+
+    results: List[Dict[str, object]] = []
+    for key, bucket in sorted(buckets.items()):
+        durations_in_bucket = [
+            float(next((f.get("duration_s", 0.0) for f in files if f.get("file") == fname), 0.0) or 0.0)
+            for fname in bucket["files"]
+        ]
+        duration_mean = sum(durations_in_bucket) / len(durations_in_bucket) if durations_in_bucket else 0.0
+        results.append(
+            {
+                "cluster": key,
+                "duration_mean_s": round(duration_mean, 2),
+                "files": bucket["files"],
+            }
+        )
+    return results
 
 
-def map_menu_labels_to_titles(
-    normalized_labels: Dict[str, object],
-    structure: Dict[str, object],
-    runtime_tol: float = DEFAULT_RUNTIME_TOLERANCE,
-    min_conf: float = 0.5,
-) -> Dict[str, str]:
-    """Associe les labels détectés aux titres connus."""
+def language_hint(files: Sequence[Dict[str, object]]) -> Optional[str]:
+    counter: Dict[str, int] = defaultdict(int)
+    for entry in files:
+        for lang in entry.get("audio_langs", []) or []:
+            counter[lang] += 1
+    if not counter:
+        return None
+    return max(counter.items(), key=lambda item: item[1])[0]
 
-    titles = structure.get("titles", []) if isinstance(structure, dict) else []
-    if not titles:
-        return {}
 
-    categories = normalized_labels.get("categories", {}) if isinstance(normalized_labels, dict) else {}
-    if not isinstance(categories, dict):
-        categories = {}
+def hints_for(files: Sequence[Dict[str, object]], cfg: HeuristicConfig) -> HeuristicHints:
+    kind = guess_kind(files, cfg)
+    main_feature = pick_main_feature(files)
+    buckets = episode_buckets(files, cfg)
+    lang = language_hint(files)
+    return HeuristicHints(kind=kind, main_feature=main_feature, episode_buckets=buckets, language_hint=lang)
 
-    main_info = detect_main_feature(structure, runtime_tol)
-    main_positions: List[int] = list(main_info.get("main_positions", []))
-    main_runtime = float(main_info.get("main_runtime", 0.0))
 
+def fallback_payload(files: Sequence[Dict[str, object]], hints: HeuristicHints) -> Dict[str, object]:
+    items: List[Dict[str, object]] = []
     mapping: Dict[str, str] = {}
-    for pos, title in enumerate(titles):
-        key = _title_key(pos)
-        runtime = float(title.get("runtime_s", 0.0) or 0.0)
-        label_candidates: List[str] = []
+    sorted_files = list(files)
+    sorted_files.sort(key=lambda entry: float(entry.get("duration_s", 0.0) or 0.0), reverse=True)
 
-        if pos in main_positions:
-            label_candidates.append("Main Feature")
-            if "chapters" in categories:
-                label_candidates.append("Chapters")
-            if len(main_positions) > 1 and "episodes" in categories:
-                label_candidates.append(f"Episode {pos + 1}")
+    for index, entry in enumerate(sorted_files, start=1):
+        filename = str(entry.get("file"))
+        if hints.kind == "film":
+            label = "Main Feature" if index == 1 else f"Bonus {index - 1}"
+        elif hints.kind == "serie":
+            label = f"Episode {index}"
         else:
-            if runtime and main_runtime and runtime + runtime_tol < main_runtime:
-                label_candidates.append("Bonus")
-            if "bonus" in categories:
-                label_candidates.append("Bonus")
-
-        if not label_candidates and "episodes" in categories:
-            label_candidates.append(f"Episode {pos + 1}")
-
-        if not label_candidates and runtime and main_runtime and abs(runtime - main_runtime) <= runtime_tol:
-            label_candidates.append("Feature Alt")
-
-        if not label_candidates:
-            continue
-
-        # Filtre selon confiance moyenne
-        entries = [entry for entry in categories.get("bonus", [])] + [entry for entry in categories.get("play", [])]
-        average_conf = None
-        confidences: List[float] = []
-        for entry in entries:
-            conf = entry.get("confidence") if isinstance(entry, dict) else None
-            if conf is not None:
-                try:
-                    confidences.append(float(conf))
-                except (TypeError, ValueError):
-                    continue
-        if confidences:
-            average_conf = sum(confidences) / len(confidences)
-        if average_conf is not None and average_conf < min_conf:
-            logging.debug("Confiance trop faible pour %s (%.2f)", key, average_conf)
-            continue
-
-        mapping[key] = ", ".join(dict.fromkeys(label_candidates))
-
-    return mapping
-
-
-def fallback_payload(
-    normalized_labels: Dict[str, object],
-    structure: Dict[str, object],
-    main_feature: Dict[str, object],
-) -> Dict[str, object]:
-    """Produit un résultat heuristique minimal en absence d'IA."""
-
-    categories = normalized_labels.get("categories", {}) if isinstance(normalized_labels, dict) else {}
-    menu_labels = sorted({label.capitalize() for label in categories.keys()})
-    titles = structure.get("titles", []) if isinstance(structure, dict) else []
-    mode = main_feature.get("mode", "unknown")
-    if mode == "single" and len(titles) == 1:
-        content_type = "film"
-    elif mode == "series" or len(titles) > 1:
-        content_type = "serie"
-    else:
-        content_type = "autre"
-
-    main_positions: List[int] = list(main_feature.get("main_positions", []))
-    mapping = {_title_key(pos): "Main Feature" for pos in main_positions}
+            label = f"Item {index}"
+        items.append({"file": filename, "label": label, "order": index})
+        mapping[filename] = label
 
     return {
         "movie_title": None,
-        "content_type": content_type,
-        "language": normalized_labels.get("language", "unknown"),
-        "menu_labels": menu_labels,
+        "content_type": hints.kind or "autre",
+        "language": hints.language_hint or "unknown",
+        "items": items,
         "mapping": mapping,
-        "confidence": 0.3,
+        "confidence": 0.2,
         "source": "heuristics",
+        "model": None,
     }
 

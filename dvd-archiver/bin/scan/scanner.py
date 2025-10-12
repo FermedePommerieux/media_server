@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orchestrateur de la phase 2 (scan + OCR + IA) du pipeline DVD."""
+"""Orchestrateur Phase 2 : analyse MKV + heuristiques + IA."""
 from __future__ import annotations
 
 import json
@@ -8,30 +8,25 @@ import os
 import shlex
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-import ai_analyzer  # noqa: E402
-import heuristics  # noqa: E402
-import ocr  # noqa: E402
-import techparse  # noqa: E402
-import writers  # noqa: E402
-
+import mkvparse  # type: ignore  # noqa: E402
+import heuristics  # type: ignore  # noqa: E402
+import ai_analyzer  # type: ignore  # noqa: E402
+import writers  # type: ignore  # noqa: E402
 
 CONFIG_FILE = Path("/etc/dvdarchiver.conf")
 
 
 def load_env_from_conf(path: Path = CONFIG_FILE) -> None:
-    """Charge les variables du fichier de configuration dans l'environnement."""
-
     if not path.exists():
         return
-
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
@@ -49,7 +44,7 @@ def load_env_from_conf(path: Path = CONFIG_FILE) -> None:
             try:
                 parts = shlex.split(value, posix=True)
             except ValueError:
-                parts = [value.strip("\"\'")]
+                parts = [value.strip("\"'")]
             if len(parts) == 0:
                 final = ""
             elif len(parts) == 1:
@@ -63,40 +58,26 @@ def load_env_from_conf(path: Path = CONFIG_FILE) -> None:
 
 @dataclass
 class Config:
-    ffmpeg_bin: str = "ffmpeg"
-    ffprobe_bin: str = "ffprobe"
-    ocr_bin: str = "tesseract"
-    ocr_langs: str = "eng+fra+spa+ita+deu"
-    frame_rate_menu_fps: float = 1.0
-    frame_max_menu: int = 30
-    menu_vob_patterns: List[str] = field(default_factory=lambda: ["VIDEO_TS.VOB", "VTS_*_0.VOB"])
-    struct_fallback_from_mkv: bool = True
-    runtime_tolerance_sec: int = 120
-    confidence_min: float = 0.5
+    mkvmerge_bin: str = "mkvmerge"
+    mediainfo_bin: str | None = "mediainfo"
+    runtime_tolerance_sec: float = 120.0
+    episode_group_min: int = 2
+    main_feature_minutes: int = 60
     llm_enable: bool = True
-    layout_version: str = "1.0"
+    layout_version: str = "2.0"
 
     @classmethod
     def from_env(cls) -> "Config":
-        patterns = os.environ.get("MENU_VOB_GLOB", "VIDEO_TS.VOB VTS_*_0.VOB").split()
+        mediainfo = os.environ.get("MEDIAINFO_BIN", "mediainfo") or None
         return cls(
-            ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"),
-            ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe"),
-            ocr_bin=os.environ.get("OCR_BIN", "tesseract"),
-            ocr_langs=os.environ.get("OCR_LANGS", "eng+fra+spa+ita+deu"),
-            frame_rate_menu_fps=float(os.environ.get("FRAME_RATE_MENU_FPS", "1")),
-            frame_max_menu=int(os.environ.get("FRAME_MAX_MENU", "30")),
-            menu_vob_patterns=patterns,
-            struct_fallback_from_mkv=os.environ.get("STRUCT_FALLBACK_FROM_MKV", "1") == "1",
-            runtime_tolerance_sec=int(os.environ.get("RUNTIME_TOLERANCE_SEC", "120")),
-            confidence_min=float(os.environ.get("CONFIDENCE_MIN", "0.5")),
+            mkvmerge_bin=os.environ.get("MKVMERGE_BIN", "mkvmerge"),
+            mediainfo_bin=mediainfo,
+            runtime_tolerance_sec=float(os.environ.get("RUNTIME_TOLERANCE_SEC", "120")),
+            episode_group_min=int(os.environ.get("EPISODE_GROUP_MIN", "2")),
+            main_feature_minutes=int(os.environ.get("MAIN_FEATURE_MINUTES", "60")),
             llm_enable=os.environ.get("LLM_ENABLE", "1") == "1",
-            layout_version=os.environ.get("ARCHIVE_LAYOUT_VERSION", "1.0"),
+            layout_version=os.environ.get("ARCHIVE_LAYOUT_VERSION", "2.0"),
         )
-
-
-class ScanError(Exception):
-    """Erreur bloquante lors du scan."""
 
 
 def setup_logging() -> None:
@@ -117,15 +98,12 @@ def load_fingerprint(disc_dir: Path) -> Dict[str, object]:
     return {}
 
 
-def list_menu_vobs(raw_dir: Path, config: Config) -> List[Path]:
-    matches: List[Path] = []
-    for pattern in config.menu_vob_patterns:
-        matches.extend(sorted(raw_dir.glob(pattern)))
-    return matches
+def ensure_mkv_present(mkv_dir: Path) -> bool:
+    return any(mkv_dir.glob("*.mkv"))
 
 
 def main() -> int:
-    start_total = time.time()
+    start_time = time.time()
     load_env_from_conf()
     setup_logging()
     config = Config.from_env()
@@ -136,10 +114,10 @@ def main() -> int:
         return 1
 
     disc_dir = Path(disc_dir_env).resolve()
-    logging.info("Démarrage du scan pour %s", disc_dir)
+    logging.info("Analyse MKV pour %s", disc_dir)
 
     if not disc_dir.exists():
-        logging.error("Le répertoire disque %s est introuvable", disc_dir)
+        logging.error("Répertoire disque introuvable: %s", disc_dir)
         return 1
 
     metadata_path = disc_dir / "meta" / "metadata_ia.json"
@@ -147,101 +125,60 @@ def main() -> int:
         logging.info("metadata_ia.json déjà présent, arrêt (idempotent)")
         return 0
 
-    (disc_dir / "meta").mkdir(parents=True, exist_ok=True)
-
-    structure_path = disc_dir / "tech" / "structure.lsdvd.yml"
-    structure: Dict[str, object] = {}
-    if structure_path.exists():
-        structure = techparse.parse_lsdvd(structure_path)
-
-    if not structure and config.struct_fallback_from_mkv:
-        mkv_dir = disc_dir / "mkv"
-        if mkv_dir.exists():
-            logging.info("Structure vide, fallback mkvmerge")
-            structure = techparse.probe_mkv_titles(mkv_dir)
+    mkv_dir = disc_dir / "mkv"
+    if not mkv_dir.is_dir():
+        logging.error("Répertoire MKV absent: %s", mkv_dir)
+        return 1
+    if not ensure_mkv_present(mkv_dir):
+        logging.error("Aucun fichier MKV détecté dans %s", mkv_dir)
+        return 1
 
     fingerprint = load_fingerprint(disc_dir)
 
-    raw_dir = disc_dir / "raw"
-    frame_paths: List[Path] = []
-    if raw_dir.exists():
-        vob_paths = list_menu_vobs(raw_dir, config)
-        if vob_paths:
-            frame_paths = ocr.extract_menu_frames(
-                vob_paths=vob_paths,
-                output_dir=disc_dir / "meta" / "ocr_frames",
-                frame_rate=config.frame_rate_menu_fps,
-                frame_max=config.frame_max_menu,
-                ffmpeg_bin=config.ffmpeg_bin,
-            )
-        else:
-            logging.info("Aucun VOB de menu détecté")
-    else:
-        logging.info("Répertoire raw/ absent, extraction des menus ignorée")
+    try:
+        mkv_struct = mkvparse.collect(mkv_dir, config.mkvmerge_bin, config.mediainfo_bin)
+    except Exception as exc:  # pylint: disable=broad-except
+        logging.error("Collecte MKV impossible: %s", exc)
+        return 1
 
-    ocr_results: List[Dict[str, object]] = []
-    normalized_labels: Dict[str, object] = {"raw": [], "categories": {}, "language": "unknown"}
-    if frame_paths:
-        logging.info("OCR sur %d frames", len(frame_paths))
-        try:
-            ocr_results = ocr.ocr_frames(frame_paths, config.ocr_langs, bin_path=config.ocr_bin)
-            normalized_labels = ocr.normalize_labels(ocr_results)
-        except Exception as exc:  # pylint: disable=broad-except
-            logging.error("Erreur OCR: %s", exc)
-    else:
-        logging.info("Aucune frame extraite, OCR ignoré")
+    files = mkv_struct.get("files", []) if isinstance(mkv_struct, dict) else []
+    if not files:
+        logging.error("Aucun fichier MKV interprétable dans %s", mkv_dir)
+        return 1
 
-    main_feature = heuristics.detect_main_feature(
-        structure,
-        runtime_tol=config.runtime_tolerance_sec,
+    heur_cfg = heuristics.HeuristicConfig(
+        runtime_tolerance_sec=config.runtime_tolerance_sec,
+        episode_group_min=config.episode_group_min,
+        main_feature_minutes=config.main_feature_minutes,
     )
-    mapping = heuristics.map_menu_labels_to_titles(
-        normalized_labels=normalized_labels,
-        structure=structure,
-        runtime_tol=config.runtime_tolerance_sec,
-        min_conf=config.confidence_min,
-    )
+    hints = heuristics.hints_for(files, heur_cfg)
+    fallback = heuristics.fallback_payload(files, hints)
 
-    logging.info("Heuristique principale: %s", main_feature)
-
-    ia_payload: Dict[str, object] | None = None
-    if config.llm_enable:
-        try:
-            ia_payload = ai_analyzer.infer_structure(
-                ocr_texts=ocr_results,
-                normalized_labels=normalized_labels,
-                struct=structure,
-                fingerprint=fingerprint,
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            logging.error("Erreur IA: %s", exc)
-    else:
-        logging.info("LLM désactivé, heuristiques uniquement")
-
-    if not ia_payload:
-        ia_payload = heuristics.fallback_payload(normalized_labels, structure, main_feature)
+    ai_result = ai_analyzer.infer_from_mkv(mkv_struct, fingerprint, hints, config.llm_enable)
+    if ai_result.parsed is None:
+        logging.warning("Résultat IA indisponible, utilisation des heuristiques")
 
     try:
         writers.write_metadata_json(
             out_path=metadata_path,
             disc_uid=disc_dir.name,
             layout_version=config.layout_version,
-            struct=structure,
-            labels=normalized_labels,
-            mapping=mapping,
-            ia_payload=ia_payload,
-            ocr_results=ocr_results,
+            mkv_struct=mkv_struct,
             fingerprint=fingerprint,
-            total_time=time.time() - start_total,
+            hints=hints,
+            ai_inference=ai_result,
+            fallback_payload=fallback,
             llm_enabled=config.llm_enable,
+            total_time=time.time() - start_time,
         )
     except Exception as exc:  # pylint: disable=broad-except
         logging.error("Écriture de metadata_ia.json échouée: %s", exc)
         return 1
 
-    logging.info("metadata_ia.json généré pour %s en %.2fs", disc_dir.name, time.time() - start_total)
+    logging.info("metadata_ia.json généré pour %s en %.2fs", disc_dir.name, time.time() - start_time)
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+
