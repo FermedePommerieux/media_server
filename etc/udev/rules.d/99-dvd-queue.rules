@@ -1,0 +1,2 @@
+#/etc/udev/rules.d/99-dvd-queue.rules 
+KERNEL=="sr[0-9]*", ACTION=="change", ENV{ID_CDROM_MEDIA_DVD}=="1", RUN+="/usr/local/bin/queue_dvd.sh"
