@@ -90,6 +90,8 @@ $DEST/<DISC_SHA_SHORT>/
 │   └── structure.lsdvd.yml
 ├── meta/
 └── raw/
+    ├── VIDEO_TS.VOB (si KEEP_MENU_VOBS=1)
+    ├── VTS_01_0.VOB (si KEEP_MENU_VOBS=1)
     └── dvd.iso (si ALLOW_ISO_DUMP=1)
 ```
 
@@ -106,6 +108,25 @@ $DEST/<DISC_SHA_SHORT>/
 ```
 
 L'étape 2 (non incluse) utilisera `mkv/` et `tech/` pour produire des fichiers enrichis dans `meta/`.
+
+## Conserver les menus DVD (.VOB)
+
+Les menus DVD contiennent des libellés humains ("Lecture", "Chapitres", "Bonus"…) indispensables à la Phase 2 (OCR/IA) pour
+reconstruire la structure sémantique du disque. Activez la sauvegarde automatique via `/etc/dvdarchiver.conf` :
+
+```bash
+KEEP_MENU_VOBS=1
+MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
+```
+
+Lorsqu'un rip aboutit, les fichiers correspondant aux motifs sont copiés une seule fois dans `raw/` aux côtés des MKV. Leur
+taille est généralement de quelques mégaoctets, impact négligeable au regard du reste de l'archive.
+
+En cas d'absence de menus copiés, vérifiez :
+
+- les permissions de montage sur `MOUNT_TMP_DIR` ;
+- la présence du dossier `VIDEO_TS/` sur le disque ;
+- les journaux `journalctl -u <service rip> -n 200 --no-pager` pour les avertissements correspondants.
 
 ## Sécurité & légalité
 

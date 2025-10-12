@@ -101,6 +101,110 @@ main() {
     exit 41
   fi
 
+  if [[ "${KEEP_MENU_VOBS}" = "1" ]]; then
+    log_info "Sauvegarde des menus .VOB activée (KEEP_MENU_VOBS=1)"
+    mkdir -p "$dest_dir/raw"
+    mkdir -p "$MOUNT_TMP_DIR" 2>/dev/null || true
+
+    local mountpoint_in_use=0
+    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$MOUNT_TMP_DIR"; then
+      mountpoint_in_use=1
+      log_warn "Point de montage $MOUNT_TMP_DIR déjà utilisé, tentative de libération"
+      safe_umount "$MOUNT_TMP_DIR"
+    fi
+
+    local mount_types="${MOUNT_FS_TYPES:-}"
+    local mount_options="$MOUNT_OPTS"
+    if [[ -z "$mount_types" ]]; then
+      local _mount_parts=()
+      IFS=',' read -r -a _mount_parts <<<"$MOUNT_OPTS"
+      if ((${#_mount_parts[@]} > 0)); then
+        local _types=()
+        local _opts=()
+        local _part
+        for _part in "${_mount_parts[@]}"; do
+          _part="${_part//[[:space:]]/}"
+          [[ -z "$_part" ]] && continue
+          case "$_part" in
+            udf|iso9660)
+              _types+=("$_part")
+              ;;
+            *)
+              _opts+=("$_part")
+              ;;
+          esac
+        done
+        if ((${#_types[@]} > 0)); then
+          mount_types=""
+          local _type
+          for _type in "${_types[@]}"; do
+            if [[ -n "$mount_types" ]]; then
+              mount_types+=",$_type"
+            else
+              mount_types="$_type"
+            fi
+          done
+        fi
+        if ((${#_opts[@]} > 0)); then
+          mount_options=""
+          local _opt
+          for _opt in "${_opts[@]}"; do
+            if [[ -n "$mount_options" ]]; then
+              mount_options+=",$_opt"
+            else
+              mount_options="$_opt"
+            fi
+          done
+        else
+          mount_options=""
+        fi
+      fi
+    fi
+    mount_types="${mount_types:-udf,iso9660}"
+    mount_options="${mount_options:-ro}"
+
+    if mount -t "$mount_types" "$DEVICE" "$MOUNT_TMP_DIR" -o "$mount_options" 2>/dev/null; then
+      local src_dir="$MOUNT_TMP_DIR/VIDEO_TS"
+      if [[ -d "$src_dir" ]]; then
+        local found_menu=0
+        for pat in ${MENU_VOB_GLOB}; do
+          for src in "$src_dir"/$pat; do
+            [[ -e "$src" ]] || continue
+            found_menu=1
+            local base
+            base="$(basename "$src")"
+            local dst="$dest_dir/raw/$base"
+            if [[ -e "$dst" ]]; then
+              log_info "Menu déjà présent, conservation inchangée : $dst"
+            else
+              log_info "Copie du menu DVD : $src → $dst"
+              if cp -a "$src" "$dst"; then
+                :
+              else
+                log_warn "Échec de copie du menu DVD : $src"
+              fi
+            fi
+          done
+        done
+        if [[ "$found_menu" -eq 0 ]]; then
+          log_warn "Aucun menu .VOB trouvé dans $src_dir (motifs : ${MENU_VOB_GLOB})"
+        fi
+      else
+        log_warn "Répertoire VIDEO_TS absent sur le disque monté : $src_dir"
+      fi
+      safe_umount "$MOUNT_TMP_DIR"
+    else
+      if [[ "$mountpoint_in_use" -eq 1 ]]; then
+        log_warn "Montage RO du DVD impossible après libération du point $MOUNT_TMP_DIR"
+      else
+        log_warn "Montage RO du DVD impossible (DEVICE=$DEVICE)"
+      fi
+    fi
+    rmdir "$MOUNT_TMP_DIR" 2>/dev/null || true
+  else
+    log_info "Sauvegarde des menus .VOB désactivée (KEEP_MENU_VOBS=0)"
+  fi
+
   if ! dump_lsdvd_yaml "$dest_dir/tech/structure.lsdvd.yml"; then
     log_warn "Impossible de générer le dump lsdvd"
   fi

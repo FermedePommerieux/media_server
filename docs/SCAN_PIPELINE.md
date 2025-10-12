@@ -46,6 +46,10 @@ Chaque script source ce fichier et les variables peuvent être surchargées via 
 
 Les logs détaillent les étapes et durées. En cas d’échec OCR/IA, un JSON minimal reste généré.
 
+> ⚠️ La Phase 2 suppose que la Phase 1 a copié les menus DVD (`VIDEO_TS.VOB`, `VTS_*_0.VOB`) dans
+> `$DEST/<DISC_UID>/raw/`. Ces fichiers servent de source aux extractions d’images (étape 2) puis à
+> l’OCR pour reconstruire les intitulés de menus et la structure sémantique du disque.
+
 ## Sortie `metadata_ia.json`
 
 ```json
