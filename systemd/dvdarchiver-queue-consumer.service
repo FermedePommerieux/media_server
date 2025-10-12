@@ -1,0 +1,15 @@
+# /etc/systemd/system/dvdarchiver-queue-consumer.service
+[Unit]
+Description=DVD Archiver - consommation de la file d'attente
+After=local-fs.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dvdarchiver.conf
+ExecStart=/usr/local/bin/queue_consumer.sh
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

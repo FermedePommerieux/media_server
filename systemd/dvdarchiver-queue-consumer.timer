@@ -1,0 +1,11 @@
+# /etc/systemd/system/dvdarchiver-queue-consumer.timer
+[Unit]
+Description=Lancement périodique du consommateur DVD Archiver
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=dvdarchiver-queue-consumer.service
+
+[Install]
+WantedBy=timers.target

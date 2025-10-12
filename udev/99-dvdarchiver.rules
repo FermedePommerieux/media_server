@@ -1,0 +1,2 @@
+# /etc/udev/rules.d/99-dvdarchiver.rules
+ACTION=="change|add", KERNEL=="sr0", ENV{DISK_MEDIA_CHANGE}=="1", RUN+="/usr/local/bin/queue_enqueue.sh"
