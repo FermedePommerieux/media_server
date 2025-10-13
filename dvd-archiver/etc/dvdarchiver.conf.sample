@@ -1,33 +1,45 @@
-# Configuration DVD Archiver - Phase 2 Scan & IA
-# Copiez ce fichier vers /etc/dvdarchiver.conf et ajustez les valeurs si nécessaire.
-
-# --- Phase 1 (rappel utile) ---
+# --- Dossiers racine ---
 DEST="/mnt/media_master"
+LOG_DIR="/var/log/dvdarchiver"
+TMP_DIR="/var/tmp/dvdarchiver"
 
-# --- Phase 2: Scan & OCR ---
+# --- Phase 1: backup décrypté (MakeMKV) ---
+DEVICE="/dev/sr0"
+MAKEMKV_BIN="makemkvcon"
+MAKEMKV_BACKUP_ENABLE=1
+MAKEMKV_BACKUP_OPTS="--decrypt"
+RAW_BACKUP_DIR="raw/VIDEO_TS_BACKUP"
+MIN_FREE_GB=10
+EJECT_ON_DONE=1
+LSDVD_BIN="lsdvd"
+
+# --- Phase 2: OCR menus + IA ---
 SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
 SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
-SCAN_TRIGGER_GLOB="${DEST:-/mnt/media_master}/*/mkv/title*.mkv"
-
-# OCR / vidéo
 FFMPEG_BIN="ffmpeg"
-FFPROBE_BIN="ffprobe"
-OCR_BIN="tesseract"
+TESSERACT_BIN="tesseract"
 OCR_LANGS="eng+fra+spa+ita+deu"
-FRAME_RATE_MENU_FPS=1
-FRAME_MAX_MENU=30
-MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
+MENU_FRAME_FPS=1
+MENU_MAX_FRAMES=30
+MENU_SCENE_MODE=1
+MENU_SCENE_THRESHOLD=0.4
+MENU_PREPROC_FILTERS="yadif,eq=contrast=1.1:brightness=0.02"
 STRUCT_FALLBACK_FROM_MKV=1
+MKVMERGE_BIN="mkvmerge"
 
-# Heuristiques & seuils
-RUNTIME_TOLERANCE_SEC=120
-CONFIDENCE_MIN=0.50
-
-# --- IA / LLM (par défaut : Qwen2.5-14B via Ollama) ---
+# --- IA / LLM ---
 LLM_ENABLE=1
 LLM_PROVIDER="ollama"
 LLM_ENDPOINT="http://127.0.0.1:11434"
 LLM_MODEL="qwen2.5:14b-instruct-q4_K_M"
 LLM_TEMPERATURE=0.2
 LLM_TIMEOUT_SEC=3600
-LLM_API_KEY=""
+
+# --- Phase 3: Build MKV ---
+BUILD_QUEUE_DIR="/var/spool/dvdarchiver-build"
+BUILD_LOG_DIR="/var/log/dvdarchiver-build"
+MAKEMKV_MKV_OPTS="--minlength=0"
+OUTPUT_NAMING_TEMPLATE_MOVIE="{title} ({year}).mkv"
+OUTPUT_NAMING_TEMPLATE_SHOW="{series_title} - S{season:02d}E{episode:02d} - {episode_title}.mkv"
+OUTPUT_NAMING_TEMPLATE_BONUS="{title} - Bonus - {label}.mkv"
+WRITE_NFO=1

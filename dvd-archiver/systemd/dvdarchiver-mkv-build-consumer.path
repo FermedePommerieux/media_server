@@ -1,0 +1,10 @@
+[Unit]
+Description=DVD Archiver - Surveillance Phase 3 (déclencheur build MKV)
+
+[Path]
+EnvironmentFile=/etc/dvdarchiver.conf
+PathExistsGlob=${DEST:-/mnt/media_master}/*/meta/metadata_ia.json
+Unit=dvdarchiver-mkv-build-consumer.service
+
+[Install]
+WantedBy=multi-user.target

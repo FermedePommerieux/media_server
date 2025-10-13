@@ -68,8 +68,11 @@ pull_llm_model() {
 
 copy_scripts() {
   install -d "${BINDIR}" "${SCANDIR}"
+  install -m 0755 "${SCRIPT_DIR}/bin/do_backup.sh" "${BINDIR}/do_backup.sh"
   install -m 0755 "${SCRIPT_DIR}/bin/scan_enqueue.sh" "${BINDIR}/scan_enqueue.sh"
   install -m 0755 "${SCRIPT_DIR}/bin/scan_consumer.sh" "${BINDIR}/scan_consumer.sh"
+  install -m 0755 "${SCRIPT_DIR}/bin/mkv_build_enqueue.sh" "${BINDIR}/mkv_build_enqueue.sh"
+  install -m 0755 "${SCRIPT_DIR}/bin/mkv_build_consumer.sh" "${BINDIR}/mkv_build_consumer.sh"
   for module in "${SCRIPT_DIR}"/bin/scan/*.py; do
     local mode=0644
     [[ $(basename "${module}") == "scanner.py" ]] && mode=0755
@@ -91,19 +94,28 @@ install_config() {
   DEST="${DEST:-/mnt/media_master}"
   SCAN_QUEUE_DIR="${SCAN_QUEUE_DIR:-/var/spool/dvdarchiver-scan}"
   SCAN_LOG_DIR="${SCAN_LOG_DIR:-/var/log/dvdarchiver-scan}"
-  mkdir -p "${DEST}" "${SCAN_QUEUE_DIR}" "${SCAN_LOG_DIR}"
-  log "Répertoires prêts: DEST=${DEST}, QUEUE=${SCAN_QUEUE_DIR}, LOG=${SCAN_LOG_DIR}"
+  BUILD_QUEUE_DIR="${BUILD_QUEUE_DIR:-/var/spool/dvdarchiver-build}"
+  BUILD_LOG_DIR="${BUILD_LOG_DIR:-/var/log/dvdarchiver-build}"
+  mkdir -p "${DEST}" "${SCAN_QUEUE_DIR}" "${SCAN_LOG_DIR}" "${BUILD_QUEUE_DIR}" "${BUILD_LOG_DIR}" "${TMP_DIR:-/var/tmp/dvdarchiver}"
+  log "Répertoires prêts: DEST=${DEST}, SCAN_QUEUE=${SCAN_QUEUE_DIR}, BUILD_QUEUE=${BUILD_QUEUE_DIR}"
 }
 
 install_systemd() {
   install -Dm0644 "${SCRIPT_DIR}/systemd/dvdarchiver-scan-consumer.service" "${SYSTEMD_DIR}/dvdarchiver-scan-consumer.service"
   install -Dm0644 "${SCRIPT_DIR}/systemd/dvdarchiver-scan-consumer.path" "${SYSTEMD_DIR}/dvdarchiver-scan-consumer.path"
+  install -Dm0644 "${SCRIPT_DIR}/systemd/dvdarchiver-mkv-build-consumer.service" "${SYSTEMD_DIR}/dvdarchiver-mkv-build-consumer.service"
+  install -Dm0644 "${SCRIPT_DIR}/systemd/dvdarchiver-mkv-build-consumer.path" "${SYSTEMD_DIR}/dvdarchiver-mkv-build-consumer.path"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
     if ! systemctl enable --now dvdarchiver-scan-consumer.path >/dev/null 2>&1; then
       warn "Impossible d'activer dvdarchiver-scan-consumer.path. Activez-le manuellement."
     else
       log "Path dvdarchiver-scan-consumer activé"
+    fi
+    if ! systemctl enable --now dvdarchiver-mkv-build-consumer.path >/dev/null 2>&1; then
+      warn "Impossible d'activer dvdarchiver-mkv-build-consumer.path. Activez-le manuellement."
+    else
+      log "Path dvdarchiver-mkv-build-consumer activé"
     fi
   else
     warn "systemctl indisponible, installez les unités manuellement"
@@ -118,12 +130,15 @@ Scripts Python dans : ${SCANDIR}
 Configuration : ${CONFIG_FILE}
 Destination : ${DEST:-/mnt/media_master}
 File de scan : ${SCAN_QUEUE_DIR:-/var/spool/dvdarchiver-scan}
-Logs : ${SCAN_LOG_DIR:-/var/log/dvdarchiver-scan}
+File de build : ${BUILD_QUEUE_DIR:-/var/spool/dvdarchiver-build}
+Logs scan : ${SCAN_LOG_DIR:-/var/log/dvdarchiver-scan}
+Logs build : ${BUILD_LOG_DIR:-/var/log/dvdarchiver-build}
 LLM : provider=${LLM_PROVIDER:-ollama} modèle=${LLM_MODEL:-qwen2.5:14b-instruct-q4_K_M}
 
 Test rapide :
-  scan_enqueue.sh "${DEST:-/mnt/media_master}/<DISC_UID>"
+  do_backup.sh
   journalctl -u dvdarchiver-scan-consumer.service -f
+  journalctl -u dvdarchiver-mkv-build-consumer.service -f
 SUMMARY
 }
 
@@ -131,12 +146,12 @@ main() {
   log "Installation Phase 2 (scan + OCR + IA)"
 
   check_dep python3
-  check_dep pip3
   check_dep tesseract
   check_dep ffmpeg
-  check_dep ffprobe
   check_dep lsdvd
   check_dep mkvmerge
+  check_dep makemkvcon
+  check_dep curl
 
   install_ollama
   # Peut définir LLM_MODEL via configuration après sourcing

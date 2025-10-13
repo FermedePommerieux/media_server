@@ -1,0 +1,14 @@
+[Unit]
+Description=DVD Archiver - Consommateur Phase 3 (build MKV)
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/dvdarchiver.conf
+ExecStart=/usr/local/bin/mkv_build_consumer.sh
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
