@@ -1,16 +1,17 @@
 # Pipeline « Backup → OCR+IA → MKV »
 
-## Phase 1 – Backup complet décrypté
+## Phase 1 – Rip complet + sauvegarde menus optionnelle
 
-- Script : `bin/do_backup.sh`.
+- Script : `bin/do_rip.sh`.
 - Actions principales :
-  - Vérification des dépendances (`makemkvcon`, `lsdvd`, `sha256sum`, `df`).
-  - Lecture unique du DVD via `makemkvcon -r backup --decrypt disc:0 <DEST>/<DISC_UID>/raw/VIDEO_TS_BACKUP/`.
+  - Vérification des dépendances (`makemkvcon`, `lsdvd`, `sha256sum`, `dd`, `eject`).
+  - Lecture unique du DVD via `makemkvcon -r mkv disc:0 all <DEST>/<DISC_UID>/mkv/` avec `ionice`/`nice` lorsque disponibles.
+  - Sauvegarde des menus avec `makemkvcon backup --decrypt` dans `raw/VIDEO_TS_BACKUP/` lorsque `MAKEMKV_BACKUP_ENABLE=1`.
   - Calcul d'un `DISC_UID` (hash SHA-256 combinant sortie `makemkvcon info` et titre disque) et écriture de `tech/fingerprint.json`.
   - Dump technique avec `lsdvd -Oy` → `tech/structure.lsdvd.yml` (fallback mkvmerge en Phase 2 si vide).
   - Enqueue automatique de la Phase 2 (`scan_enqueue.sh`).
 
-Le script est idempotent : si des `.VOB` sont déjà présents dans `raw/VIDEO_TS_BACKUP/VIDEO_TS/`, aucune nouvelle lecture du DVD n'est lancée.
+Le script est idempotent : si des `.mkv` existent déjà dans `mkv/` (ou des `.VOB` dans `raw/VIDEO_TS_BACKUP/VIDEO_TS/` lorsque le backup est activé), aucune nouvelle lecture du DVD n'est lancée.
 
 ## Phase 2 – OCR menus + IA obligatoire
 
