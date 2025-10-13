@@ -6,7 +6,7 @@ Pipeline complet « Backup → OCR/IA → MKV » pour archiver des DVD vidéo en
 
 1. **Backup décrypté (Phase 1)** : `bin/do_backup.sh` lance `makemkvcon backup --decrypt` pour créer une copie complète du DVD (menus inclus) dans `raw/VIDEO_TS_BACKUP/`. La commande calcule un `disc_uid`, écrit `tech/fingerprint.json` ainsi que `tech/structure.lsdvd.yml`, puis enfile automatiquement la Phase 2.
 2. **Analyse menus + IA (Phase 2)** : `scan_consumer.sh` consomme les jobs de scan, extrait les menus `.VOB` via ffmpeg, exécute Tesseract, agrège les heuristiques et interroge un LLM local (Qwen2.5-14B via Ollama par défaut) pour produire `meta/metadata_ia.json` conforme au schéma imposé.
-3. **Build MKV (Phase 3)** : `mkv_build_consumer.sh` ne traite que les disques dont la métadonnée a été validée. Pour chaque titre, il appelle `makemkvcon mkv file:... title:X`, renomme les fichiers selon les templates, écrit optionnellement des sidecars `.nfo` et affiche un récapitulatif.
+3. **Build MKV (Phase 3)** : `mkv_build_consumer.sh` ne traite que les disques dont la métadonnée a été validée. Pour chaque titre, il appelle `makemkvcon mkv file:... title:X`, renomme les fichiers, génère des NFO Jellyfin/Kodi et exporte automatiquement les couples `.mkv`/`.nfo` vers les bibliothèques Jellyfin configurées (films, séries, bonus compris).
 
 Les scripts s'appuient sur `/etc/dvdarchiver.conf` (copié depuis `etc/dvdarchiver.conf.sample`) pour éviter tout chemin en dur. Toutes les étapes sont relançables sans effets de bord.
 
@@ -91,8 +91,9 @@ Voir `etc/dvdarchiver.conf.sample` pour la liste complète :
 
 - `MENU_SCENE_MODE`, `MENU_PREPROC_FILTERS` pour contrôler l'extraction de frames.
 - `LLM_*` pour sélectionner le fournisseur et le modèle (Ollama par défaut).
-- `OUTPUT_NAMING_TEMPLATE_*` pour personnaliser le nom des MKV.
-- `WRITE_NFO=1` pour générer des sidecars Jellyfin/Kodi.
+- `OUTPUT_NAMING_TEMPLATE_*` pour personnaliser les noms déposés dans `mkv/`.
+- Bloc **Export Jellyfin** (`EXPORT_ENABLE`, `EXPORT_METHOD`, `EXPORT_MOVIES_DIR`, `EXPORT_SERIES_DIR`, `EXPORT_MOVIE_EXTRAS_SUBDIR`, `EXPORT_SERIES_SPECIALS_SEASON`, `NFO_LANGUAGE_DEFAULT`, `SANITIZE_MAXLEN`) pour piloter l'export automatique (copy/move/ln) et la sanitation des chemins.
+- `WRITE_NFO=1` pour produire les `.nfo` locaux **et** exportés.
 
 ## Dépannage
 
