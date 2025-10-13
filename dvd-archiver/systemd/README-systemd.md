@@ -9,8 +9,8 @@ Deux couples `.path`/`.service` automatisent les phases 2 et 3 du pipeline.
 
 ## Phase 3 – Build MKV
 
-- `dvdarchiver-mkv-build-consumer.service` : exécute `mkv_build_consumer.sh` pour générer les `.mkv` (validation du JSON, appel MakeMKV, génération optionnelle des `.nfo`).
-- `dvdarchiver-mkv-build-consumer.path` : surveille `${DEST}/*/meta/metadata_ia.json` et déclenche la phase 3 uniquement lorsque la métadonnée est présente.
+- `dvdarchiver-mkv-build-consumer.service` : exécute `mkv_build_consumer.sh` pour générer les `.mkv`. Le script relit et valide systématiquement `meta/metadata_ia.json` via `validator.Meta` avant d'appeler MakeMKV puis, si configuré, de produire les `.nfo`.
+- `dvdarchiver-mkv-build-consumer.path` : surveille `${DEST}/*/meta/metadata_ia.json` et déclenche la phase 3 uniquement lorsque la métadonnée valide est présente.
 
 ## Installation
 

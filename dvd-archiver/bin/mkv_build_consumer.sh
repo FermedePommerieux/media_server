@@ -7,6 +7,7 @@ if [[ -f "$CONFIG_FILE" ]]; then
   source "$CONFIG_FILE"
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEST="${DEST:-/mnt/media_master}"
 BUILD_QUEUE_DIR="${BUILD_QUEUE_DIR:-/var/spool/dvdarchiver-build}"
 BUILD_LOG_DIR="${BUILD_LOG_DIR:-/var/log/dvdarchiver-build}"
@@ -34,7 +35,8 @@ run_builder() {
   WRITE_NFO="$WRITE_NFO" \
   MAKEMKV_BIN="$MAKEMKV_BIN" \
   MAKEMKV_MKV_OPTS="$MAKEMKV_MKV_OPTS" \
-"$PYTHON_BIN" - "$disc_dir" "$MKVMERGE_BIN" <<'PY'
+  SCAN_MODULE_DIR="${SCAN_MODULE_DIR:-${SCRIPT_DIR}/scan}" \
+ "$PYTHON_BIN" - "$disc_dir" <<'PY'
 from __future__ import annotations
 import json
 import os
@@ -43,29 +45,44 @@ import subprocess
 import sys
 from pathlib import Path
 
-scan_candidates = [
-    Path(os.environ.get("SCAN_MODULE_DIR", "/usr/local/bin/scan")),
-]
+
+def extend_sys_path() -> None:
+    candidates = []
+    env_path = os.environ.get("SCAN_MODULE_DIR")
+    if env_path:
+        candidates.append(Path(env_path))
+    try:
+        current_base = Path(__file__).resolve().parent
+        candidates.append(current_base)
+        candidates.append(current_base / "scan")
+        candidates.append(current_base.parent / "bin" / "scan")
+    except (OSError, RuntimeError):
+        pass
+    for candidate in candidates:
+        if candidate.exists() and str(candidate) not in sys.path:
+            sys.path.insert(0, str(candidate))
+
+
+extend_sys_path()
+
 try:
-    current_base = Path(__file__).resolve().parent
-    scan_candidates.append(current_base / "scan")
-    scan_candidates.append(current_base.parent / "bin" / "scan")
-except (OSError, RuntimeError):
-    pass
-for candidate in scan_candidates:
-    if candidate.exists() and str(candidate) not in sys.path:
-        sys.path.insert(0, str(candidate))
-
-import heuristics  # type: ignore
-import scanner  # type: ignore
-import techparse  # type: ignore
+    import validator  # type: ignore
+    from validator import ValidationError  # type: ignore
+except RuntimeError as exc:  # pragma: no cover - dépendance manquante
+    print(f"Validation indisponible: {exc}", file=sys.stderr)
+    sys.exit(20)
 
 
-def sanitize(value: object) -> str:
+def sanitize(value: object, *, fallback: str = "Sans titre") -> str:
     text = str(value or "").strip()
-    text = text.replace("/", "-").replace("\\", "-").replace(":", "-")
+    if not text:
+        text = fallback
+    forbidden = '<>:"/\\|?*'
+    for char in forbidden:
+        text = text.replace(char, "-")
+    text = text.replace("\n", " ").replace("\r", " ")
     text = " ".join(text.split())
-    return text or "Sans titre"
+    return text or fallback
 
 
 def apply_template(template: str, **values: object) -> str:
@@ -86,29 +103,29 @@ def xml_escape(text: str) -> str:
     )
 
 
-def write_nfo_file(final_path: Path, item: dict, metadata: dict, title_text: str, language: str) -> None:
+def write_nfo_file(final_path: Path, item, metadata, title_text: str, language: str) -> None:
     nfo_path = final_path.with_suffix(".nfo")
     if nfo_path.exists() and nfo_path.stat().st_size > 0:
         return
-    if item.get("type") == "episode":
+    if item.type == "episode":
         content = (
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
             "<episodedetails>\n"
             f"  <title>{xml_escape(title_text)}</title>\n"
-            f"  <season>{int(item.get('season', 0))}</season>\n"
-            f"  <episode>{int(item.get('episode', 0))}</episode>\n"
-            f"  <plot></plot>\n"
+            f"  <season>{int(item.season or 0)}</season>\n"
+            f"  <episode>{int(item.episode or 0)}</episode>\n"
+            "  <plot></plot>\n"
             f"  <language>{xml_escape(language)}</language>\n"
             "</episodedetails>\n"
         )
     else:
-        year_value = metadata.get("year") or ""
+        year_value = metadata.year or ""
         content = (
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
             "<movie>\n"
             f"  <title>{xml_escape(title_text)}</title>\n"
             f"  <year>{xml_escape(str(year_value))}</year>\n"
-            f"  <plot></plot>\n"
+            "  <plot></plot>\n"
             f"  <language>{xml_escape(language)}</language>\n"
             "</movie>\n"
         )
@@ -117,28 +134,29 @@ def write_nfo_file(final_path: Path, item: dict, metadata: dict, title_text: str
 
 def main() -> int:
     disc_dir = Path(sys.argv[1]).resolve()
-    mkvmerge_bin = sys.argv[2]
     metadata_path = disc_dir / "meta" / "metadata_ia.json"
     if not metadata_path.exists():
         print(f"metadata_ia.json introuvable: {metadata_path}", file=sys.stderr)
         return 2
 
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-    raw_rel = os.environ.get("RAW_BACKUP_DIR", "raw/VIDEO_TS_BACKUP")
-    backup_root = disc_dir / raw_rel
-    structure_path = disc_dir / "tech" / "structure.lsdvd.yml"
-    structure = {}
-    if structure_path.exists():
-        structure = techparse.parse_lsdvd(structure_path)
-    if not structure.get("titles"):
-        structure = techparse.probe_backup_titles(backup_root, mkvmerge_bin=mkvmerge_bin)
-    titles = heuristics.normalize_titles(structure)
-    if not titles:
-        print("Structure technique introuvable pour la validation", file=sys.stderr)
+    try:
+        metadata_dict = json.loads(metadata_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        print(f"JSON invalide: {exc}", file=sys.stderr)
         return 3
 
-    scanner.validate_metadata(metadata, titles)
+    try:
+        metadata = validator.validate_payload(metadata_dict)
+    except ValidationError as exc:
+        print("Validation metadata échouée:", file=sys.stderr)
+        for error in exc.errors():
+            loc = error.get("loc", [])
+            path = ".".join(str(part) for part in loc) if loc else "(racine)"
+            print(f"  - {path}: {error.get('msg')}", file=sys.stderr)
+        return 4
 
+    raw_rel = os.environ.get("RAW_BACKUP_DIR", "raw/VIDEO_TS_BACKUP")
+    backup_root = disc_dir / raw_rel
     movie_template = os.environ.get("OUTPUT_NAMING_TEMPLATE_MOVIE", "{title} ({year}).mkv")
     show_template = os.environ.get(
         "OUTPUT_NAMING_TEMPLATE_SHOW",
@@ -152,29 +170,41 @@ def main() -> int:
     out_dir = disc_dir / "mkv"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    mapping = metadata.get("mapping", {})
-    language = str(metadata.get("language", "unknown"))
+    mapping = metadata.mapping
+    language = str(metadata.language)
 
     generated: list[str] = []
     skipped: list[str] = []
 
-    for item in metadata.get("items", []):
-        title_index = int(item.get("title_index", 0))
-        item_type = item.get("type", "bonus")
+    for item in metadata.items:
+        title_index = int(item.title_index)
         key = f"title_{title_index}"
-        label = sanitize(item.get("label"))
-        if item_type == "main":
-            base_title = sanitize(metadata.get("movie_title") or mapping.get(key) or label or f"Titre {title_index}")
-            year = metadata.get("year") or ""
+        label = sanitize(item.label, fallback=f"Title {title_index}")
+
+        if item.type == "main":
+            base_title = sanitize(
+                metadata.movie_title
+                or mapping.get(key)
+                or label
+                or f"Titre {title_index}",
+                fallback=f"Titre {title_index}",
+            )
+            year = metadata.year or ""
             filename = apply_template(movie_template, title=base_title, year=year or "")
-            if not year:
+            if not metadata.year:
                 filename = filename.replace(" ()", "").replace("()", "").strip()
             nfo_title = base_title
-        elif item_type == "episode":
-            series_title = sanitize(metadata.get("series_title") or metadata.get("movie_title") or "Série")
-            season = int(item.get("season", 1))
-            episode = int(item.get("episode", title_index))
-            episode_title = sanitize(item.get("episode_title") or label or f"Episode {episode}")
+        elif item.type == "episode":
+            series_title = sanitize(
+                metadata.series_title or metadata.movie_title or "Série",
+                fallback="Série",
+            )
+            season = int(item.season or 1)
+            episode = int(item.episode or title_index)
+            episode_title = sanitize(
+                item.episode_title or label or f"Episode {episode}",
+                fallback=f"Episode {episode}",
+            )
             filename = apply_template(
                 show_template,
                 series_title=series_title,
@@ -184,9 +214,17 @@ def main() -> int:
             )
             nfo_title = episode_title
         else:
-            base_title = sanitize(metadata.get("movie_title") or metadata.get("series_title") or "Bonus")
-            filename = apply_template(bonus_template, title=base_title, label=label or f"Title {title_index}")
+            base_title = sanitize(
+                metadata.movie_title or metadata.series_title or label or "Bonus",
+                fallback="Bonus",
+            )
+            filename = apply_template(
+                bonus_template,
+                title=base_title,
+                label=label or f"Title {title_index}",
+            )
             nfo_title = label or base_title
+
         if not filename.lower().endswith(".mkv"):
             filename = f"{filename}.mkv"
         final_path = out_dir / filename
@@ -194,6 +232,7 @@ def main() -> int:
             print(f"Skip (déjà présent): {final_path}")
             skipped.append(str(final_path))
             continue
+
         before = {p.name for p in out_dir.glob("*.mkv")}
         cmd = [
             makemkv_bin,

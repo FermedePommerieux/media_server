@@ -10,6 +10,13 @@ Pipeline complet « Backup → OCR/IA → MKV » pour archiver des DVD vidéo en
 
 Les scripts s'appuient sur `/etc/dvdarchiver.conf` (copié depuis `etc/dvdarchiver.conf.sample`) pour éviter tout chemin en dur. Toutes les étapes sont relançables sans effets de bord.
 
+## Gating métadonnées
+
+- La validation repose sur `bin/scan/validator.py` (Pydantic ≥ 2) qui applique des règles conditionnelles : un film doit exposer un item `main` et un mapping associé, une série doit fournir un `series_title` non vide et couvrir tous les épisodes avec leurs saisons/numéros, tandis que la catégorie `autre` exige soit un `main`, soit au minimum deux bonus/bandes-annonces avec une confiance ≥ 0,5.
+- `scanner.py` vérifie la réponse du LLM **avant** d'écrire `meta/metadata_ia.json`. En cas d'échec, aucun fichier n'est créé et le job passe en `.err`, ce qui permet une relance après correction.
+- `mkv_build_consumer.sh` recharge et revalide systématiquement `metadata_ia.json`. Si le JSON devient invalide (édition manuelle, corruption…), la Phase 3 s'arrête immédiatement, ne lance pas MakeMKV et renvoie le job en `.err`.
+- Les noms finaux (`OUTPUT_NAMING_TEMPLATE_*`) et l'éventuelle génération `.nfo` ne sont déclenchés que lorsque les métadonnées respectent le schéma.
+
 ## Pourquoi cette séquence ?
 
 - **Une seule lecture du DVD** : la Phase 1 réalise un backup complet et décrypté ; les phases suivantes travaillent exclusivement sur cette copie locale.

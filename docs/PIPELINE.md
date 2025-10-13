@@ -23,8 +23,8 @@ Le script est idempotent : si des `.VOB` sont déjà présents dans `raw/VIDEO_T
   4. Lecture de la structure technique (`techparse.parse_lsdvd` puis fallback `techparse.probe_backup_titles` avec `mkvmerge -J`).
   5. Heuristiques (`heuristics.py`) : détection du contenu principal, mapping par défaut, fusion avec les suggestions IA.
   6. Appel du LLM (`ai_analyzer.py` → Ollama/Qwen2.5-14B par défaut) avec prompt francophone imposant le schéma JSON final.
-  7. Validation stricte dans `scanner.py` (content_type, titres, mapping, épisodes film/série, confiance) avant écriture.
-  8. `writers.py` écrit `meta/metadata_ia.json` si et seulement si la validation passe.
+  7. Validation stricte via `validator.Meta` (Pydantic ≥ 2) : règles conditionnelles selon `content_type`, mapping obligatoire, cohérence film/série/autre.
+  8. `writers.py` écrit `meta/metadata_ia.json` uniquement lorsque la validation réussit.
 
 Schéma JSON requis :
 
@@ -61,20 +61,69 @@ Schéma JSON requis :
 }
 ```
 
-Règles de complétude dans `scanner.py` :
+Règles principales imposées par `validator.Meta` :
 
-- Chaque `items[].title_index` doit correspondre à un titre connu.
-- `content_type` ∈ {film, serie, autre}.
-- `film` : `movie_title` non vide ou `confidence ≥ 0,7`.
-- `serie` : `series_title` non vide ET chaque épisode possède `season` + `episode` définis + mapping couvrant tous les épisodes.
-- `mapping` doit couvrir au minimum le contenu principal et tous les épisodes.
-- `confidence` ∈ [0,1].
-- Échec → pas de fichier écrit, code de retour ≠ 0 (job `.err`).
+- `items` ne peut pas être vide, chaque entrée possède `runtime_seconds ≥ 60`, `audio_langs`/`sub_langs` listées.
+- `film` : aucun `series_title`, présence d'au moins un item `main`, mapping couvrant un des `main`, et si `movie_title` est nul alors `confidence ≥ 0,70`.
+- `serie` : `series_title` requis, au moins un item `episode`, chaque épisode doit renseigner `season` & `episode` et être couvert par le mapping, `movie_title` doit rester nul.
+- `autre` : `confidence ≥ 0,50` et nécessité d'un item `main` ou d'au moins deux éléments `bonus|trailer`.
+- Dans tous les cas, `confidence ∈ [0,1]`. Échec → retour ≠ 0, job `.err`, aucune écriture JSON.
+
+### Exemples valides
+
+```jsonc
+// Film
+{
+  "disc_uid": "DISC_FILM",
+  "content_type": "film",
+  "movie_title": "Mon Film",
+  "series_title": null,
+  "language": "fr",
+  "year": 2002,
+  "items": [
+    {"type": "main", "title_index": 1, "runtime_seconds": 5400, "audio_langs": ["fr"], "sub_langs": ["fr"]}
+  ],
+  "mapping": {"title_1": "Main Feature"},
+  "confidence": 0.8,
+  "sources": {}
+}
+
+// Série
+{
+  "disc_uid": "DISC_SERIE",
+  "content_type": "serie",
+  "movie_title": null,
+  "series_title": "Série Démo",
+  "language": "fr",
+  "items": [
+    {"type": "episode", "title_index": 3, "season": 1, "episode": 1, "runtime_seconds": 1800, "audio_langs": ["fr"], "sub_langs": []}
+  ],
+  "mapping": {"title_3": "Épisode 1"},
+  "confidence": 0.7,
+  "sources": {}
+}
+
+// Autre
+{
+  "disc_uid": "DISC_AUTRE",
+  "content_type": "autre",
+  "movie_title": null,
+  "series_title": null,
+  "language": "fr",
+  "items": [
+    {"type": "bonus", "title_index": 5, "runtime_seconds": 900, "audio_langs": ["fr"], "sub_langs": []},
+    {"type": "trailer", "title_index": 6, "runtime_seconds": 600, "audio_langs": ["fr"], "sub_langs": []}
+  ],
+  "mapping": {"title_5": "Bonus", "title_6": "Bande-annonce"},
+  "confidence": 0.6,
+  "sources": {}
+}
+```
 
 ## Phase 3 – Build MKV (gated)
 
 - Enqueue : `mkv_build_enqueue.sh` ajoute `BUILD_<ts>_<rand>.job` uniquement si `meta/metadata_ia.json` existe.
-- Consommation : `mkv_build_consumer.sh` charge le job, valide à nouveau `metadata_ia.json` (relecture de la structure, appel `scanner.validate_metadata`), calcule le plan de nommage et exécute `makemkvcon mkv` pour chaque titre.
+- Consommation : `mkv_build_consumer.sh` charge le job, revalide `metadata_ia.json` via `validator.Meta` puis calcule le plan de nommage avant d'exécuter `makemkvcon mkv` pour chaque titre.
 
 Commande MakeMKV utilisée :
 
@@ -84,7 +133,7 @@ makemkvcon -r --progress=-stdout mkv "file:$DEST/<DISC_UID>/$RAW_BACKUP_DIR" tit
 
 Après création, le fichier généré (`title_tXX.mkv`) est renommé selon les templates (`OUTPUT_NAMING_TEMPLATE_*`). Les sorties existantes (>0 octet) sont ignorées pour garantir l'idempotence. Si `WRITE_NFO=1`, un `.nfo` minimal est créé (film ou `episodedetails`).
 
-La fin du script affiche un récapitulatif (nombre de fichiers générés/ignorés).
+La fin du script affiche un récapitulatif (nombre de fichiers générés/ignorés). Si la validation échoue ou si MakeMKV retourne une erreur, le job est renommé en `.err` et aucun MKV n'est produit.
 
 ## Reprise sur erreur
 

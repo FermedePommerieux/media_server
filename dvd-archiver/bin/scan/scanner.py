@@ -22,6 +22,16 @@ import ocr  # noqa: E402
 import techparse  # noqa: E402
 import writers  # noqa: E402
 
+try:  # noqa: E402
+    import validator  # type: ignore
+    from validator import ValidationError  # type: ignore
+except RuntimeError as exc:  # noqa: E402
+    validator = None  # type: ignore
+    ValidationError = Exception  # type: ignore
+    VALIDATOR_IMPORT_ERROR = exc
+else:
+    VALIDATOR_IMPORT_ERROR = None
+
 
 CONFIG_FILE = Path("/etc/dvdarchiver.conf")
 
@@ -206,94 +216,6 @@ def build_metadata(
     return metadata
 
 
-def validate_metadata(metadata: Dict[str, object], titles: List[heuristics.TitleInfo]) -> None:
-    required_top = [
-        "disc_uid",
-        "content_type",
-        "movie_title",
-        "series_title",
-        "year",
-        "language",
-        "items",
-        "mapping",
-        "confidence",
-        "sources",
-    ]
-    for key in required_top:
-        if key not in metadata:
-            raise ScanError(f"Clé manquante dans metadata: {key}")
-
-    content_type = metadata.get("content_type")
-    if content_type not in {"film", "serie", "autre"}:
-        raise ScanError("content_type invalide")
-
-    items = metadata.get("items")
-    if not isinstance(items, list) or not items:
-        raise ScanError("items doit être une liste non vide")
-
-    title_indexes = {title.title_index for title in titles}
-    mapping = metadata.get("mapping") if isinstance(metadata.get("mapping"), dict) else {}
-    covered_indexes = {int(key.split("_")[1]) for key in mapping if key.startswith("title_") and key.split("_")[1].isdigit()}
-
-    main_indexes = {title.title_index for title in titles if any(it.get("title_index") == title.title_index and it.get("type") in {"main", "episode"} for it in items)}
-    if not main_indexes:
-        raise ScanError("Aucun item principal ou épisode identifié")
-
-    for item in items:
-        if not isinstance(item, dict):
-            raise ScanError("Chaque item doit être un dictionnaire")
-        try:
-            title_index = int(item.get("title_index"))
-        except (TypeError, ValueError):
-            raise ScanError("title_index invalide") from None
-        if title_index not in title_indexes:
-            raise ScanError(f"title_index {title_index} inconnu")
-        item.setdefault("runtime_seconds", 0)
-        item.setdefault("audio_langs", [])
-        item.setdefault("sub_langs", [])
-        if not isinstance(item["audio_langs"], list) or not isinstance(item["sub_langs"], list):
-            raise ScanError("audio_langs/sub_langs doivent être des listes")
-        if item.get("type") not in {"main", "episode", "bonus", "trailer"}:
-            raise ScanError("type d'item invalide")
-        if item.get("type") == "episode":
-            season = item.get("season")
-            episode = item.get("episode")
-            if season in {None, ""} or episode in {None, ""}:
-                raise ScanError("Saison/épisode obligatoires pour un item épisode")
-    if content_type == "film":
-        if not metadata.get("movie_title") and float(metadata.get("confidence", 0.0)) < 0.7:
-            raise ScanError("Titre film manquant et confiance insuffisante")
-        main_idx = next(iter(main_indexes))
-        if f"title_{main_idx}" not in mapping:
-            raise ScanError("Mapping principal manquant pour le film")
-    if content_type == "serie":
-        if not metadata.get("series_title"):
-            raise ScanError("Titre de série obligatoire")
-        episodes = [item for item in items if item.get("type") == "episode"]
-        if not episodes:
-            raise ScanError("Aucun épisode détecté pour une série")
-        for ep in episodes:
-            season = int(ep.get("season")) if ep.get("season") is not None else None
-            episode_num = int(ep.get("episode")) if ep.get("episode") is not None else None
-            if not season or not episode_num:
-                raise ScanError("Saison/épisode invalides")
-            idx = int(ep["title_index"])
-            if f"title_{idx}" not in mapping:
-                raise ScanError(f"Mapping manquant pour l'épisode {idx}")
-    if content_type == "autre":
-        if not mapping:
-            raise ScanError("Mapping requis pour le contenu 'autre'")
-    if not covered_indexes.issuperset(main_indexes):
-        raise ScanError("Mapping incomplet pour les titres principaux/épisodes")
-    confidence = metadata.get("confidence")
-    try:
-        conf_value = float(confidence)
-    except (TypeError, ValueError):
-        raise ScanError("Confiance invalide") from None
-    if not 0.0 <= conf_value <= 1.0:
-        raise ScanError("Confiance hors bornes")
-
-
 def main() -> int:
     start_total = time.time()
     load_env_from_conf()
@@ -396,14 +318,24 @@ def main() -> int:
         ocr_dir=frames_dir if frame_paths else None,
     )
 
-    titles = heuristics.normalize_titles(structure)
-    try:
-        validate_metadata(metadata, titles)
-    except ScanError as exc:
-        logging.error("Validation metadata échouée: %s", exc)
+    if VALIDATOR_IMPORT_ERROR is not None or validator is None:
+        logging.error("Validation indisponible: %s", VALIDATOR_IMPORT_ERROR)
         return 1
 
-    writers.write_metadata_json(metadata_path, metadata)
+    try:
+        meta_model = validator.validate_payload(metadata)
+    except ValidationError as exc:  # type: ignore[misc]
+        logging.error("Validation metadata échouée")
+        for err in exc.errors():
+            loc = err.get("loc", [])
+            path = ".".join(str(part) for part in loc) if loc else "(racine)"
+            logging.error("  - %s: %s", path, err.get("msg"))
+        return 1
+    except Exception as exc:  # pragma: no cover - cas inattendu
+        logging.error("Erreur inattendue lors de la validation: %s", exc)
+        return 1
+
+    writers.write_metadata_json(metadata_path, meta_model)
     logging.info("metadata_ia.json généré pour %s en %.2fs", disc_dir.name, time.time() - start_total)
     return 0
 
