@@ -84,5 +84,5 @@ disc_id() {
     DISC_SHA_SHORT="$DISC_SHA_FULL"
   fi
   export DISC_SHA_SHORT
-  printf '%s\n' "$DISC_SHA_FULL"
+  printf '%s %s\n' "$DISC_SHA_FULL" "$DISC_SHA_SHORT"
 }

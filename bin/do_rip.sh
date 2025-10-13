@@ -60,8 +60,14 @@ main() {
     title="DVD_UNTITLED"
   fi
 
-  local sha_full
-  sha_full=$(disc_id "$title")
+  local sha_full disc_sha_short
+  if ! IFS=' ' read -r sha_full disc_sha_short < <(disc_id "$title"); then
+    log_err "Impossible de calculer l'empreinte du disque"
+    exit 31
+  fi
+  DISC_SHA_FULL="$sha_full"
+  DISC_SHA_SHORT="$disc_sha_short"
+  export DISC_SHA_FULL DISC_SHA_SHORT
   local dest_dir="$DEST/${DISC_SHA_SHORT}"
   mkdir -p "$dest_dir/mkv" "$dest_dir/tech" "$dest_dir/meta" "$dest_dir/raw"
 
