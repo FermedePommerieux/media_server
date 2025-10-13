@@ -15,7 +15,7 @@ PY_SOURCES := $(wildcard bin/scan/*.py)
 .PHONY: install uninstall lint fmt test test-shellcheck
 
 install:
-./install.sh --with-systemd --with-udev --prefix=$(PREFIX)
+	./install.sh --with-systemd --with-udev --prefix=$(PREFIX)
 
 uninstall:
 	rm -f $(addprefix $(BINDIR)/,$(notdir $(BIN_SCRIPTS)))
