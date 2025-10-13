@@ -56,6 +56,41 @@ ensure_command() {
   fi
 }
 
+has_libdvdcss() {
+  if command -v dpkg >/dev/null 2>&1 && dpkg -s libdvdcss2 >/dev/null 2>&1; then
+    return 0
+  fi
+  if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q "libdvdcss"; then
+    return 0
+  fi
+  return 1
+}
+
+ensure_libdvdcss() {
+  if has_libdvdcss; then
+    return
+  fi
+  echo "Installation de libdvdcss (via libdvd-pkg)"
+  ensure_package "libdvd-pkg"
+  if command -v dpkg-reconfigure >/dev/null 2>&1; then
+    echo "Configuration de libdvd-pkg pour télécharger et construire libdvdcss2"
+    set +e
+    DEBIAN_FRONTEND=noninteractive dpkg-reconfigure libdvd-pkg
+    local status=$?
+    set -e
+    if [[ $status -ne 0 ]]; then
+      echo "Avertissement: dpkg-reconfigure libdvd-pkg a échoué" >&2
+    fi
+  else
+    echo "Avertissement: dpkg-reconfigure introuvable, configurez libdvd-pkg manuellement" >&2
+  fi
+  if has_libdvdcss; then
+    echo "libdvdcss opérationnel"
+  else
+    echo "Avertissement: libdvdcss demeure indisponible, installez-la manuellement" >&2
+  fi
+}
+
 install_ollama() {
   if command -v ollama >/dev/null 2>&1; then
     return
@@ -131,6 +166,8 @@ for spec in "${REQUIRED_COMMANDS[@]}"; do
   IFS=':' read -r bin pkg <<<"$spec"
   ensure_command "$bin" "$pkg"
 done
+
+ensure_libdvdcss
 
 install_ollama
 if command -v ollama >/dev/null 2>&1; then

@@ -125,15 +125,39 @@ capture_structure() {
   local dest_dir="$1" backup_target="$dest_dir/${RAW_BACKUP_DIR}"
   local tech_dir="$dest_dir/tech"
   mkdir -p "$tech_dir"
-  if command -v "$LSDVD_BIN" >/dev/null 2>&1; then
-    log "Capture de la structure via lsdvd"
-    if ! "$LSDVD_BIN" -Oy "$backup_target" >"$tech_dir/structure.lsdvd.yml" 2>"$tech_dir/structure.lsdvd.err"; then
-      err "lsdvd a échoué (voir $tech_dir/structure.lsdvd.err)"
+  if ! command -v "$LSDVD_BIN" >/dev/null 2>&1; then
+    err "lsdvd introuvable, structure.lsdvd.yml non générée"
+    return
+  fi
+
+  local lsdvd_source="$backup_target"
+  local lsdvd_source_desc="backup (${backup_target})"
+  if [[ ! -f "$backup_target/VIDEO_TS/VIDEO_TS.IFO" ]]; then
+    if [[ -b "$DEVICE" ]]; then
+      lsdvd_source="$DEVICE"
+      lsdvd_source_desc="périphérique (${DEVICE})"
+      log "Aucun backup valide pour lsdvd, utilisation du périphérique ${DEVICE}"
     else
-      rm -f "$tech_dir/structure.lsdvd.err"
+      err "Aucune source valide pour lsdvd (backup manquant et périphérique $DEVICE indisponible)"
+      return
+    fi
+  fi
+
+  local lsdvd_cmd=("$LSDVD_BIN" -Oy "$lsdvd_source")
+  log "Capture de la structure via lsdvd depuis ${lsdvd_source_desc} (${lsdvd_cmd[*]})"
+  if ! "${lsdvd_cmd[@]}" >"$tech_dir/structure.lsdvd.yml" 2>"$tech_dir/structure.lsdvd.err"; then
+    err "lsdvd a échoué (voir $tech_dir/structure.lsdvd.err)"
+    if [[ -s "$tech_dir/structure.lsdvd.err" ]]; then
+      if grep -qi 'Encrypted DVD support unavailable' "$tech_dir/structure.lsdvd.err"; then
+        err "Support CSS absent : installez libdvdcss (ou équivalent) pour permettre la lecture chiffrée."
+      elif grep -qi 'No medium found' "$tech_dir/structure.lsdvd.err"; then
+        err "Aucun média détecté par lsdvd sur ${lsdvd_source}. Vérifiez que le disque est monté et accessible."
+      elif grep -qi "Can't open" "$tech_dir/structure.lsdvd.err"; then
+        err "lsdvd ne parvient pas à ouvrir ${lsdvd_source}. Vérifiez les permissions et la présence du périphérique."
+      fi
     fi
   else
-    err "lsdvd introuvable, structure.lsdvd.yml non générée"
+    rm -f "$tech_dir/structure.lsdvd.err"
   fi
 }
 

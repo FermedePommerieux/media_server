@@ -72,11 +72,13 @@ $DEST/<DISC_UID>/
 
 ## Dépendances essentielles
 
-- **Phase 1** : `makemkvcon`, `lsdvd`, `eject`, `isoinfo` (`genisoimage`), `sha256sum`.
+- **Phase 1** : `makemkvcon`, `lsdvd`, `eject`, `isoinfo` (`genisoimage`), `sha256sum`, **libdvdcss** (lecture des DVD chiffrés).
 - **Phase 2** : `ffmpeg`, `tesseract-ocr`, `python3`, `requests` (pour Ollama), modèle LLM via Ollama.
 - **Phase 3** : `makemkvcon`, `mkvmerge` (fallback technique), `python3`.
 
 Tous ces binaires doivent être accessibles par l'utilisateur système exécutant les services.
+
+Le script `install.sh` tente automatiquement d'installer `libdvdcss` en s'appuyant sur `libdvd-pkg` et exécute `dpkg-reconfigure libdvd-pkg` pour télécharger/assembler la bibliothèque lorsque c'est possible.
 
 ## Idempotence & reprise
 
