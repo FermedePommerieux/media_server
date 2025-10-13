@@ -160,6 +160,25 @@ if [[ $WITH_SYSTEMD -eq 1 ]]; then
   install -Dm0644 "$SCRIPT_DIR"/systemd/dvdarchiver-scan-consumer.path "$SYSTEMD_DIR/dvdarchiver-scan-consumer.path"
   if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload
+    set +e
+    if systemctl enable --now dvdarchiver-queue-consumer.path >/dev/null 2>&1; then
+      echo "Unité dvdarchiver-queue-consumer.path activée"
+    else
+      echo "Avertissement: impossible d'activer dvdarchiver-queue-consumer.path automatiquement" >&2
+    fi
+    if systemctl enable --now dvdarchiver-scan-consumer.path >/dev/null 2>&1; then
+      echo "Unité dvdarchiver-scan-consumer.path activée"
+    else
+      echo "Avertissement: impossible d'activer dvdarchiver-scan-consumer.path automatiquement" >&2
+    fi
+    if systemctl enable --now dvdarchiver-queue-consumer.timer >/dev/null 2>&1; then
+      echo "Timer dvdarchiver-queue-consumer.timer activé"
+    else
+      echo "Avertissement: impossible d'activer dvdarchiver-queue-consumer.timer automatiquement" >&2
+    fi
+    set -e
+  else
+    echo "systemctl introuvable, activez les unités systemd manuellement" >&2
   fi
   echo "Unités systemd installées"
 fi
