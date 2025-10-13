@@ -27,11 +27,50 @@ fi
 # shellcheck source=bin/lib/common.sh
 source "$LIB_DIR/common.sh"
 
-DO_RIP_BIN="${DO_RIP_BIN:-$SCRIPT_DIR/do_rip.sh}"
+resolve_bin() {
+  local __target="$1"; shift || true
+  local resolved=""
+  local candidate
+  for candidate in "$@"; do
+    [[ -z "$candidate" ]] && continue
+    if [[ -x "$candidate" ]]; then
+      resolved="$candidate"
+      break
+    fi
+  done
+  printf -v "${__target}" '%s' "$resolved"
+}
 
-if [[ ! -x "$DO_RIP_BIN" ]]; then
-  log_err "Script do_rip introuvable ou non exécutable: $DO_RIP_BIN"
+declare -a DO_BACKUP_CANDIDATES=()
+if [[ -n "${DO_BACKUP_BIN:-}" ]]; then
+  DO_BACKUP_CANDIDATES+=("${DO_BACKUP_BIN}")
+fi
+DO_BACKUP_CANDIDATES+=("$SCRIPT_DIR/do_backup.sh")
+DO_BACKUP_CANDIDATES+=("$(cd "$SCRIPT_DIR/.." && pwd)/dvd-archiver/bin/do_backup.sh")
+DO_BACKUP_CANDIDATES+=("/usr/local/bin/do_backup.sh")
+
+resolve_bin DO_BACKUP_BIN_RESOLVED "${DO_BACKUP_CANDIDATES[@]}"
+
+if [[ -z "$DO_BACKUP_BIN_RESOLVED" ]]; then
+  backup_candidates_str=$(IFS=', '; printf '%s' "${DO_BACKUP_CANDIDATES[*]}")
+  log_err "Script do_backup introuvable (candidats: ${backup_candidates_str})"
   exit 51
+fi
+
+declare -a LEGACY_RIP_CANDIDATES=()
+LEGACY_RIP_BIN="${LEGACY_RIP_BIN:-${DO_RIP_BIN:-}}"
+if [[ -n "$LEGACY_RIP_BIN" ]]; then
+  LEGACY_RIP_CANDIDATES+=("$LEGACY_RIP_BIN")
+fi
+if [[ -n "${LEGACY_RIP_CANDIDATES[*]:-}" ]]; then
+  resolve_bin LEGACY_RIP_BIN_RESOLVED "${LEGACY_RIP_CANDIDATES[@]}"
+  if [[ -z "$LEGACY_RIP_BIN_RESOLVED" ]]; then
+    legacy_candidates_str=$(IFS=', '; printf '%s' "${LEGACY_RIP_CANDIDATES[*]}")
+    log_err "Script post-backup (do_rip) introuvable: ${legacy_candidates_str}"
+    exit 52
+  fi
+else
+  LEGACY_RIP_BIN_RESOLVED=""
 fi
 
 process_job() {
@@ -53,10 +92,19 @@ process_job() {
   fi
   export DEVICE
   local exit_code=0
-  if "$DO_RIP_BIN"; then
+  log_info "Exécution do_backup: $DO_BACKUP_BIN_RESOLVED"
+  if "$DO_BACKUP_BIN_RESOLVED"; then
     exit_code=0
   else
     exit_code=$?
+  fi
+  if [[ $exit_code -eq 0 && -n "$LEGACY_RIP_BIN_RESOLVED" ]]; then
+    log_info "Exécution post-backup (do_rip): $LEGACY_RIP_BIN_RESOLVED"
+    if "$LEGACY_RIP_BIN_RESOLVED"; then
+      exit_code=0
+    else
+      exit_code=$?
+    fi
   fi
   if [[ $exit_code -eq 0 ]]; then
     rm -f "${status_file}.done"

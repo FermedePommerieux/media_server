@@ -16,6 +16,9 @@ LSDVD_BIN="lsdvd"
 EJECT_BIN="eject"
 MOUNT_OPTS="udf,iso9660,ro"
 MAKEMKV_OPTS="--minlength=0"
+DO_BACKUP_BIN="/usr/local/bin/do_backup.sh"
+# Optionnel : exécuter l'ancien rip MakeMKV (mkv) après le backup.
+LEGACY_RIP_BIN=""
 
 # --- Phase 1 : backup décrypté des menus ---
 KEEP_MENU_VOBS=1
