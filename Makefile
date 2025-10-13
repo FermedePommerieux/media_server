@@ -5,8 +5,20 @@ SYSDDIR := /etc/systemd/system
 UDEVDIR := /etc/udev/rules.d
 CONFIG := /etc/dvdarchiver.conf
 
+UNINSTALL_ARGS := --prefix=$(PREFIX)
+ifeq ($(WITH_SYSTEMD),0)
+UNINSTALL_ARGS += --no-systemd
+endif
+ifeq ($(WITH_UDEV),0)
+UNINSTALL_ARGS += --no-udev
+endif
+ifeq ($(KEEP_MODEL),1)
+UNINSTALL_ARGS += --keep-model
+endif
+
 BIN_SCRIPTS := bin/do_rip.sh bin/queue_enqueue.sh bin/queue_consumer.sh bin/scan_enqueue.sh bin/scan_consumer.sh
 LIB_SCRIPTS := bin/lib/common.sh bin/lib/hash.sh bin/lib/techdump.sh
+ROOT_SCRIPTS := install.sh uninstall.sh
 SYSTEMD_UNITS := systemd/dvdarchiver-queue-consumer.service systemd/dvdarchiver-queue-consumer.path systemd/dvdarchiver-queue-consumer.timer \
                   systemd/dvdarchiver-scan-consumer.service systemd/dvdarchiver-scan-consumer.path
 UDEV_RULE := udev/99-dvdarchiver.rules
@@ -18,10 +30,7 @@ install:
 	./install.sh --with-systemd --with-udev --prefix=$(PREFIX)
 
 uninstall:
-	rm -f $(addprefix $(BINDIR)/,$(notdir $(BIN_SCRIPTS)))
-	rm -rf $(LIBDIR)
-	rm -f $(addprefix $(SYSDDIR)/,$(notdir $(SYSTEMD_UNITS)))
-	rm -f $(UDEVDIR)/$(notdir $(UDEV_RULE))
+	./uninstall.sh $(UNINSTALL_ARGS)
 
 lint:
 	@if command -v ruff >/dev/null 2>&1; then \
@@ -43,7 +52,7 @@ test:
 
 test-shellcheck:
 	@if command -v shellcheck >/dev/null 2>&1; then \
-		shellcheck $(BIN_SCRIPTS) $(LIB_SCRIPTS); \
+                shellcheck $(BIN_SCRIPTS) $(LIB_SCRIPTS) $(ROOT_SCRIPTS); \
 	else \
 		echo "shellcheck non disponible"; \
 	fi
