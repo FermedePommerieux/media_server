@@ -114,10 +114,20 @@ ts() {
 
 json_escape() {
   local str="$1"
-  str=${str//\\/\\\\}
-  str=${str//"/\\\"}
-  str=${str//$'\n'/\\n}
-  str=${str//$'\r'/\\r}
-  str=${str//$'\t'/\\t}
-  printf '%s' "$str"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - "$str" <<'PY'
+import json
+import sys
+
+print(json.dumps(sys.argv[1])[1:-1], end='')
+PY
+  else
+    local dq='"'
+    str=${str//\\/\\\\}
+    str=${str//${dq}/\\${dq}}
+    str=${str//$'\n'/ }
+    str=${str//$'\r'/ }
+    str=${str//$'\t'/ }
+    printf '%s' "$str"
+  fi
 }
