@@ -59,7 +59,7 @@ run_makemkv_info() {
   local info_cmd
   IFS=' ' read -r -a info_args <<<"$MAKEMKV_INFO_OPTS"
   info_cmd=("$MAKEMKV_BIN" -r "${info_args[@]}" info "disc:0")
-  log "Extraction des informations disque (${info_cmd[*]})"
+  log "Extraction des informations disque (${info_cmd[*]})" >&2
   if ! "${info_cmd[@]}" >"$info_file" 2>"$info_file.err"; then
     err "makemkvcon info a échoué (voir $info_file.err)"
     rm -f "$info_file" "$info_file.err"
