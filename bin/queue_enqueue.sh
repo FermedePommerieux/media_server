@@ -41,7 +41,7 @@ main() {
   done
   cat >"$job_file" <<JOB
 DEVICE=${DEVICE}
-ACTION=RIP
+ACTION=BACKUP
 JOB_TS=${ts_now}
 JOB_ID=${rand}
 JOB

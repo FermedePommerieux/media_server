@@ -2,7 +2,7 @@
 
 ## Phase 1 – Backup complet décrypté
 
-- Script : `bin/do_backup.sh`.
+- Script : `do_backup.sh`.
 - Actions principales :
   - Vérification des dépendances (`makemkvcon`, `lsdvd`, `sha256sum`, `df`).
   - Lecture unique du DVD via `makemkvcon -r backup --decrypt disc:0 <DEST>/<DISC_UID>/raw/VIDEO_TS_BACKUP/`.

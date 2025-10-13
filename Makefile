@@ -16,7 +16,7 @@ ifeq ($(KEEP_MODEL),1)
 UNINSTALL_ARGS += --keep-model
 endif
 
-BIN_SCRIPTS := bin/do_rip.sh bin/queue_enqueue.sh bin/queue_consumer.sh bin/scan_enqueue.sh bin/scan_consumer.sh
+BIN_SCRIPTS := dvd-archiver/bin/do_backup.sh bin/queue_enqueue.sh bin/queue_consumer.sh bin/scan_enqueue.sh bin/scan_consumer.sh
 LIB_SCRIPTS := bin/lib/common.sh bin/lib/hash.sh bin/lib/techdump.sh
 ROOT_SCRIPTS := install.sh uninstall.sh
 SYSTEMD_UNITS := systemd/dvdarchiver-queue-consumer.service systemd/dvdarchiver-queue-consumer.path systemd/dvdarchiver-queue-consumer.timer \
