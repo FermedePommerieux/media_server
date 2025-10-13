@@ -44,6 +44,18 @@ ensure_package() {
   fi
 }
 
+ensure_command() {
+  local bin="$1" pkg="${2:-$1}"
+  if command -v "$bin" >/dev/null 2>&1; then
+    return
+  fi
+  echo "Commande $bin absente, tentative d'installation via $pkg"
+  ensure_package "$pkg"
+  if ! command -v "$bin" >/dev/null 2>&1; then
+    echo "Avertissement: la commande $bin reste indisponible après l'installation de $pkg" >&2
+  fi
+}
+
 install_ollama() {
   if command -v ollama >/dev/null 2>&1; then
     return
@@ -104,8 +116,20 @@ SCAN_PY_DIR="${PREFIX}/bin/scan"
 
 install -d "$BINDIR" "$LIBDIR" "$SCAN_PY_DIR"
 
-for pkg in tesseract-ocr ffmpeg mkvtoolnix curl; do
-  ensure_package "$pkg"
+REQUIRED_COMMANDS=(
+  "tesseract:tesseract-ocr"
+  "ffmpeg:ffmpeg"
+  "mkvmerge:mkvtoolnix"
+  "curl:curl"
+  "lsdvd:lsdvd"
+  "isoinfo:genisoimage"
+  "eject:eject"
+  "python3:python3"
+)
+
+for spec in "${REQUIRED_COMMANDS[@]}"; do
+  IFS=':' read -r bin pkg <<<"$spec"
+  ensure_command "$bin" "$pkg"
 done
 
 install_ollama

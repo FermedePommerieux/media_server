@@ -31,7 +31,7 @@ sudo make install            # ou sudo ./install.sh
 
 Le script d'installation :
 
-- vérifie la présence des dépendances (`makemkvcon`, `lsdvd`, `ffmpeg`, `tesseract`, `mkvmerge`, `python3`, `curl`...),
+- vérifie la présence des dépendances (`makemkvcon`, `lsdvd`, `ffmpeg`, `tesseract`, `isoinfo`/`genisoimage`, `mkvmerge`, `python3`, `curl`...) et installe automatiquement via APT celles qui sont disponibles (`lsdvd`, `ffmpeg`, `tesseract`, `genisoimage`, `mkvtoolnix`, `curl`, `python3`, `eject`),
 - installe Ollama si nécessaire puis tente `ollama pull qwen2.5:14b-instruct-q4_K_M`,
 - copie les scripts shell dans `/usr/local/bin/`, les modules Python dans `/usr/local/bin/scan/`,
 - crée `/etc/dvdarchiver.conf` si absent et prépare les répertoires (`DEST`, queues, logs),
@@ -72,7 +72,7 @@ $DEST/<DISC_UID>/
 
 ## Dépendances essentielles
 
-- **Phase 1** : `makemkvcon`, `lsdvd`, `eject`, `sha256sum`.
+- **Phase 1** : `makemkvcon`, `lsdvd`, `eject`, `isoinfo` (`genisoimage`), `sha256sum`.
 - **Phase 2** : `ffmpeg`, `tesseract-ocr`, `python3`, `requests` (pour Ollama), modèle LLM via Ollama.
 - **Phase 3** : `makemkvcon`, `mkvmerge` (fallback technique), `python3`.
 
