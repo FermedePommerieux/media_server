@@ -42,4 +42,14 @@ MAKEMKV_MKV_OPTS="--minlength=0"
 OUTPUT_NAMING_TEMPLATE_MOVIE="{title} ({year}).mkv"
 OUTPUT_NAMING_TEMPLATE_SHOW="{series_title} - S{season:02d}E{episode:02d} - {episode_title}.mkv"
 OUTPUT_NAMING_TEMPLATE_BONUS="{title} - Bonus - {label}.mkv"
+
+# --- Export Jellyfin ---
+EXPORT_ENABLE=1
+EXPORT_METHOD="copy"
+EXPORT_MOVIES_DIR="/mnt/nas/media/Library/Movies"
+EXPORT_SERIES_DIR="/mnt/nas/media/Library/Series"
+EXPORT_MOVIE_EXTRAS_SUBDIR="extras"
+EXPORT_SERIES_SPECIALS_SEASON=0
 WRITE_NFO=1
+NFO_LANGUAGE_DEFAULT="unknown"
+SANITIZE_MAXLEN=180

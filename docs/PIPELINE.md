@@ -131,7 +131,7 @@ Commande MakeMKV utilisée :
 makemkvcon -r --progress=-stdout mkv "file:$DEST/<DISC_UID>/$RAW_BACKUP_DIR" title:<index> "$DEST/<DISC_UID>/mkv" ${MAKEMKV_MKV_OPTS}
 ```
 
-Après création, le fichier généré (`title_tXX.mkv`) est renommé selon les templates (`OUTPUT_NAMING_TEMPLATE_*`). Les sorties existantes (>0 octet) sont ignorées pour garantir l'idempotence. Si `WRITE_NFO=1`, un `.nfo` minimal est créé (film ou `episodedetails`).
+Après création, le fichier généré (`title_tXX.mkv`) est renommé selon les templates (`OUTPUT_NAMING_TEMPLATE_*`). Les sorties existantes (>0 octet) sont ignorées pour garantir l'idempotence. Si `WRITE_NFO=1`, des `.nfo` Jellyfin/Kodi complets sont produits et l'ensemble `.mkv`/`.nfo` est exporté vers les bibliothèques Jellyfin (films, séries, bonus/specials) suivant la méthode (`copy`/`move`/`ln`).
 
 La fin du script affiche un récapitulatif (nombre de fichiers générés/ignorés). Si la validation échoue ou si MakeMKV retourne une erreur, le job est renommé en `.err` et aucun MKV n'est produit.
 
