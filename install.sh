@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-WITH_SYSTEMD=0
-WITH_UDEV=0
+WITH_SYSTEMD=1
+WITH_UDEV=1
 PREFIX="${PREFIX:-/usr/local}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BINDIR="${PREFIX}/bin"
