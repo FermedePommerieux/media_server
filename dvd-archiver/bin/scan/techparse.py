@@ -56,7 +56,7 @@ def parse_lsdvd(path: Path) -> Dict[str, object]:
         angles = len(title.get("angles", [])) if isinstance(title.get("angles"), list) else 0
         titles.append(
             {
-                "index": title.get("ix", idx),
+                "index": title.get("ix", idx + 1),
                 "runtime_s": runtime,
                 "chapters": chapters,
                 "audio_langs": audio_langs,
@@ -67,28 +67,51 @@ def parse_lsdvd(path: Path) -> Dict[str, object]:
     return {"source": "lsdvd", "titles": titles}
 
 
-def probe_mkv_titles(mkv_dir: Path) -> Dict[str, object]:
+def _run_mkvmerge_json(target: Path, mkvmerge_bin: str = "mkvmerge") -> Dict[str, object]:
+    cmd = [mkvmerge_bin, "-J", str(target)]
+    logging.info("Analyse mkvmerge: %s", " ".join(cmd))
+    try:
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return json.loads(result.stdout)
+    except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
+        logging.warning("mkvmerge échoué pour %s: %s", target, exc)
+        return {}
+
+
+def probe_backup_titles(backup_dir: Path, mkvmerge_bin: str = "mkvmerge") -> Dict[str, object]:
+    """Analyse les VOB du backup pour récupérer durées et langues."""
+
+    video_ts = backup_dir / "VIDEO_TS"
+    if not video_ts.exists():
+        logging.debug("Répertoire VIDEO_TS introuvable: %s", video_ts)
+        return {}
+
     titles: List[Dict[str, object]] = []
-    for mkv_file in sorted(mkv_dir.glob("*.mkv")):
-        cmd = ["mkvmerge", "-J", str(mkv_file)]
-        logging.info("Analyse mkvmerge: %s", " ".join(cmd))
+    for vob in sorted(video_ts.glob("VTS_*_1.VOB")):
+        parts = vob.stem.split("_")
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            data = json.loads(result.stdout)
-        except (subprocess.CalledProcessError, json.JSONDecodeError) as exc:
-            logging.warning("mkvmerge échoué pour %s: %s", mkv_file, exc)
+            title_index = int(parts[1])
+        except (IndexError, ValueError):
+            continue
+        data = _run_mkvmerge_json(vob, mkvmerge_bin=mkvmerge_bin)
+        if not data:
             continue
         container = data.get("container", {}).get("properties", {})
         duration_ns = container.get("duration")
-        if duration_ns is None:
-            runtime = 0.0
-        else:
-            runtime = float(duration_ns) / 1e9
-        audio_langs = [track.get("properties", {}).get("language") for track in data.get("tracks", []) if track.get("type") == "audio"]
-        sub_langs = [track.get("properties", {}).get("language") for track in data.get("tracks", []) if track.get("type") == "subtitles"]
+        runtime = float(duration_ns) / 1e9 if duration_ns else 0.0
+        audio_langs = [
+            track.get("properties", {}).get("language")
+            for track in data.get("tracks", [])
+            if track.get("type") == "audio"
+        ]
+        sub_langs = [
+            track.get("properties", {}).get("language")
+            for track in data.get("tracks", [])
+            if track.get("type") == "subtitles"
+        ]
         titles.append(
             {
-                "index": mkv_file.stem,
+                "index": title_index,
                 "runtime_s": runtime,
                 "chapters": len(container.get("chapters", [])),
                 "audio_langs": [lang for lang in audio_langs if lang],

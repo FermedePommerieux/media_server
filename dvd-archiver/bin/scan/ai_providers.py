@@ -107,13 +107,14 @@ class MockClient(LLMClient):
         logging.info("Mock LLM utilisé (pas d'appel réseau)")
         return json.dumps(
             {
-                "movie_title": None,
                 "content_type": "autre",
+                "movie_title": None,
+                "series_title": None,
+                "year": None,
                 "language": "unknown",
-                "menu_labels": [],
+                "items": [],
                 "mapping": {},
                 "confidence": 0.1,
-                "source": "mock",
             }
         )
 

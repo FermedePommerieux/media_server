@@ -3,7 +3,7 @@ Description=DVD Archiver - Surveillance Phase 2 (déclencheur scan)
 
 [Path]
 EnvironmentFile=/etc/dvdarchiver.conf
-PathExistsGlob=${SCAN_TRIGGER_GLOB}
+PathExistsGlob=${DEST:-/mnt/media_master}/*/raw/VIDEO_TS_BACKUP/VIDEO_TS/VIDEO_TS.VOB
 Unit=dvdarchiver-scan-consumer.service
 
 [Install]

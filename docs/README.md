@@ -1,147 +1,97 @@
 # DVD Archiver
 
-Pipeline d'archivage DVD en deux étapes :
+Pipeline complet « Backup → OCR/IA → MKV » pour archiver des DVD vidéo en trois phases idempotentes.
 
-1. **Extraction** : rip complet du disque avec MakeMKV, génération d'empreintes robustes, backup décrypté des menus et collecte des artefacts techniques.
-2. **Enrichissement IA** : OCR des menus `.VOB`, analyse par LLM (Ollama par défaut) et écriture de `meta/metadata_ia.json`.
+## Vue d'ensemble
 
-Le dépôt fournit une intégration cohérente avec `systemd`, `udev` et un fichier de configuration centralisé (`/etc/dvdarchiver.conf`).
+1. **Backup décrypté (Phase 1)** : `bin/do_backup.sh` lance `makemkvcon backup --decrypt` pour créer une copie complète du DVD (menus inclus) dans `raw/VIDEO_TS_BACKUP/`. La commande calcule un `disc_uid`, écrit `tech/fingerprint.json` ainsi que `tech/structure.lsdvd.yml`, puis enfile automatiquement la Phase 2.
+2. **Analyse menus + IA (Phase 2)** : `scan_consumer.sh` consomme les jobs de scan, extrait les menus `.VOB` via ffmpeg, exécute Tesseract, agrège les heuristiques et interroge un LLM local (Qwen2.5-14B via Ollama par défaut) pour produire `meta/metadata_ia.json` conforme au schéma imposé.
+3. **Build MKV (Phase 3)** : `mkv_build_consumer.sh` ne traite que les disques dont la métadonnée a été validée. Pour chaque titre, il appelle `makemkvcon mkv file:... title:X`, renomme les fichiers selon les templates, écrit optionnellement des sidecars `.nfo` et affiche un récapitulatif.
 
-## Pré-requis
+Les scripts s'appuient sur `/etc/dvdarchiver.conf` (copié depuis `etc/dvdarchiver.conf.sample`) pour éviter tout chemin en dur. Toutes les étapes sont relançables sans effets de bord.
 
-Installez les dépendances suivantes (paquets Debian/Ubuntu indiqués) :
+## Pourquoi cette séquence ?
 
-```bash
-sudo apt install makemkv-bin cdrkit lsdvd ffmpeg eject util-linux coreutils \
-                 tesseract-ocr mkvtoolnix curl
-```
+- **Une seule lecture du DVD** : la Phase 1 réalise un backup complet et décrypté ; les phases suivantes travaillent exclusivement sur cette copie locale.
+- **OCR fiable sur les menus** : les menus `.VOB` sont nécessaires pour identifier les épisodes, bonus ou bandes-annonces. La Phase 2 extrait des frames prétraitées, détecte la langue, normalise les libellés et envoie les informations techniques + OCR au LLM.
+- **Gating strict avant les MKV** : aucun fichier `.mkv` n'est généré tant que `meta/metadata_ia.json` n'est pas conforme (schéma, complétude film/série, mapping des titres). Un échec de validation laisse le job en `.err` afin de corriger puis relancer.
 
-`install.sh` déclenche automatiquement l'installation du modèle Ollama `qwen2.5:14b-instruct-q4_K_M` (si le réseau est disponible). Vérifiez que le lecteur DVD est accessible sous `/dev/sr0` (modifiable via la configuration).
-
-## Installation
-
-Deux options sont proposées :
-
-### Via `make`
+## Installation rapide
 
 ```bash
-sudo make install
+sudo make install            # ou sudo ./install.sh
 ```
 
-Cette commande copie les scripts dans `/usr/local/bin`, installe la configuration si absente (`/etc/dvdarchiver.conf`), et prépare les répertoires nécessaires.
+Le script d'installation :
 
-### Via `install.sh`
+- vérifie la présence des dépendances (`makemkvcon`, `lsdvd`, `ffmpeg`, `tesseract`, `mkvmerge`, `python3`, `curl`...),
+- installe Ollama si nécessaire puis tente `ollama pull qwen2.5:14b-instruct-q4_K_M`,
+- copie les scripts shell dans `/usr/local/bin/`, les modules Python dans `/usr/local/bin/scan/`,
+- crée `/etc/dvdarchiver.conf` si absent et prépare les répertoires (`DEST`, queues, logs),
+- installe les unités systemd (`dvdarchiver-scan-consumer.*`, `dvdarchiver-mkv-build-consumer.*`) puis active les `.path`.
+
+## Test manuel
 
 ```bash
-sudo ./install.sh --with-systemd --with-udev
+sudo /usr/local/bin/do_backup.sh         # Phase 1 sur le DVD présent dans le lecteur
+journalctl -u dvdarchiver-scan-consumer.service -f
+journalctl -u dvdarchiver-mkv-build-consumer.service -f
 ```
 
-Le script prend en charge :
+Le premier journal affiche la progression OCR/IA, le second la création des MKV dès que `metadata_ia.json` est valide.
 
-- la copie des scripts (`bin/`) dans `/usr/local/bin/` et des bibliothèques dans `/usr/local/lib/dvdarchiver/` ;
-- l'installation de `/etc/dvdarchiver.conf` si le fichier n'existe pas (copie du sample) ;
-- l'installation optionnelle des unités systemd et de la règle udev.
-
-## Configuration
-
-Toutes les options résident dans `/etc/dvdarchiver.conf`. Exemple :
-
-```bash
-DEST="/mnt/media_master"
-QUEUE_DIR="/var/spool/dvdarchiver"
-LOG_DIR="/var/log/dvdarchiver"
-TMP_DIR="/var/tmp/dvdarchiver"
-DEVICE="/dev/sr0"
-MAKEMKV_OPTS="--minlength=0"
-
-# Phase 1 : backup menus
-KEEP_MENU_VOBS=1
-MENU_VOB_GLOB="VIDEO_TS.VOB VTS_*_0.VOB"
-MAKEMKV_BACKUP_ENABLE=1
-MAKEMKV_BACKUP_OPTS="--decrypt"
-
-# Phase 2 : OCR + IA
-FFMPEG_BIN="ffmpeg"
-TESSERACT_BIN="tesseract"
-OCR_LANGS="eng+fra+spa+ita+deu"
-MENU_FRAME_FPS=1
-MENU_MAX_FRAMES=30
-MENU_SCENE_MODE=1
-MENU_SCENE_THRESHOLD=0.4
-MENU_PREPROC_FILTERS="yadif,eq=contrast=1.1:brightness=0.02"
-LLM_PROVIDER="ollama"
-LLM_MODEL="qwen2.5:14b-instruct-q4_K_M"
-LLM_ENDPOINT="http://127.0.0.1:11434"
-```
-
-Chaque script source ce fichier puis applique ses valeurs par défaut. Il est possible de surcharger temporairement une variable en exportant la valeur avant l'appel (ex. `DEVICE=/dev/sr1 queue_enqueue.sh`).
-
-### Backup des menus VIDEO_TS décryptés
-
-Le rip MakeMKV réalise désormais un backup complet du DVD (option `makemkvcon backup --decrypt`) pour conserver les menus `.VOB` dans `raw/VIDEO_TS_BACKUP/VIDEO_TS/`. Ces fichiers sont indispensables au pipeline OCR : sans menus décryptés, aucun texte ne peut être extrait pour alimenter l'IA. L'idempotence est respectée : si les `.VOB` sont déjà présents, le backup n'est pas relancé.
-
-## Démarrage des services
-
-1. Installer la règle udev (`udev/README-udev.md`).
-2. Installer et activer les unités systemd (`systemd/README-systemd.md`).
-
-La règle udev place un job dans la file lors de l'insertion d'un disque. L'unité `.path` déclenche le consommateur qui appelle `do_rip.sh`.
-
-## Fonctionnement
-
-- **File d'attente** : les jobs sont des fichiers dans `${QUEUE_DIR}` (par défaut `/var/spool/dvdarchiver`). Ils contiennent l'environnement minimal (`DEVICE`, `ACTION`).
-- **Consommateur** : `queue_consumer.sh` traite les jobs triés, appelle `do_rip.sh` et déplace le job en `.done` ou `.err` selon le résultat.
-- **Ripper** : `do_rip.sh` vérifie les dépendances, calcule une empreinte robuste (hash secteurs + structure VIDEO_TS), lance MakeMKV (mode `--minlength=0` par défaut), génère `fingerprint.json`, `structure.lsdvd.yml` et sauvegarde les menus décryptés dans `raw/VIDEO_TS_BACKUP/`.
-- **Idempotence** : si un dossier `mkv/` avec au moins un fichier existe déjà pour l'empreinte donnée, le rip est ignoré (code de retour 0).
-- **Logs** : envoyés vers le journal systemd (`logger`) et vers `${LOG_DIR}/dvdarchiver.log`, plus un fichier de rip dédié.
-
-La phase 2 s'appuie sur les scripts `scan_enqueue.sh` / `scan_consumer.sh` et `bin/scan/scanner.py` pour : détecter les VOB de menus, extraire jusqu'à 30 frames par VOB, lancer Tesseract multilingue, normaliser les libellés (Lecture, Bonus, Chapitres...), interroger l'IA (Ollama par défaut) et produire `meta/metadata_ia.json`.
-
-## Structure d'archive
+## Structure générée
 
 ```
-$DEST/<DISC_SHA_SHORT>/
-├── mkv/
-│   ├── title00.mkv
-│   └── ...
+$DEST/<DISC_UID>/
+├── raw/VIDEO_TS_BACKUP/VIDEO_TS/*.VOB
 ├── tech/
 │   ├── fingerprint.json
 │   └── structure.lsdvd.yml
 ├── meta/
 │   ├── metadata_ia.json
-│   └── menu_frames/ (frames extraites pour l'OCR)
-└── raw/
-    ├── dvd.iso (si ALLOW_ISO_DUMP=1)
-    └── VIDEO_TS_BACKUP/
-        └── VIDEO_TS/*.VOB
+│   └── menu_frames/*.png
+└── mkv/
+    ├── <Nom propre>.mkv
+    └── <Nom propre>.nfo (optionnel)
 ```
 
-`fingerprint.json` contient :
+`metadata_ia.json` contient :
 
-```json
-{
-  "disc_uid": "abcd1234ef567890",
-  "volume_id": "MON_DVD",
-  "struct_sha256": "<sha256>",
-  "generated_at": "2024-01-01T12:00:00Z",
-  "layout_version": "1.0"
-}
-```
+- `disc_uid`, `content_type`, titres film/série, année, langue,
+- la liste `items[]` (type main/episode/bonus, `title_index`, durée, langues audio/sous-titres, saison/épisode le cas échéant),
+- `mapping` (`title_X` → libellé humain),
+- `confidence` (0–1) et `sources` (OCR, dump technique, fournisseur LLM).
 
-`metadata_ia.json` regroupe le résumé OCR, l'analyse du LLM et les informations techniques utiles (durées, langues, empreinte du disque). Les scripts consignent également les outils utilisés (ffmpeg, tesseract, modèle Ollama).
+## Dépendances essentielles
 
-## Sécurité & légalité
+- **Phase 1** : `makemkvcon`, `lsdvd`, `eject`, `sha256sum`.
+- **Phase 2** : `ffmpeg`, `tesseract-ocr`, `python3`, `requests` (pour Ollama), modèle LLM via Ollama.
+- **Phase 3** : `makemkvcon`, `mkvmerge` (fallback technique), `python3`.
 
-Le projet vise l'archivage domestique de médias dont vous possédez les droits. Aucune fonctionnalité de contournement de DRM n'est fournie. Respectez la législation locale.
+Tous ces binaires doivent être accessibles par l'utilisateur système exécutant les services.
+
+## Idempotence & reprise
+
+- `do_backup.sh` s'arrête si un backup existe déjà (présence de `.VOB` dans `raw/VIDEO_TS_BACKUP/VIDEO_TS/`).
+- `scan_enqueue.sh` ne crée pas de job si `meta/metadata_ia.json` est déjà présent.
+- `mkv_build_enqueue.sh` refuse d'ajouter un job tant que la métadonnée manque.
+- Les consommateurs déplacent chaque job en `.done` ou `.err` et conservent un log détaillé.
+
+## Configuration clé
+
+Voir `etc/dvdarchiver.conf.sample` pour la liste complète :
+
+- `MENU_SCENE_MODE`, `MENU_PREPROC_FILTERS` pour contrôler l'extraction de frames.
+- `LLM_*` pour sélectionner le fournisseur et le modèle (Ollama par défaut).
+- `OUTPUT_NAMING_TEMPLATE_*` pour personnaliser le nom des MKV.
+- `WRITE_NFO=1` pour générer des sidecars Jellyfin/Kodi.
 
 ## Dépannage
 
-- **Espace disque insuffisant** : augmentez `MIN_FREE_GB` ou libérez de l'espace sur la destination.
-- **Dépendances manquantes** : vérifiez que `makemkvcon`, `isoinfo`, `lsdvd`, `ffmpeg`, `tesseract`, `mkvmerge` (ou `ffprobe`) et `ollama` sont accessibles.
-- **Permissions** : assurez-vous que l'utilisateur systemd a accès au périphérique optique et aux répertoires `DEST`, `QUEUE_DIR`, `LOG_DIR`, `TMP_DIR`.
-- **Règle udev inactive** : validez avec `udevadm monitor` et ajustez `KERNEL=="sr0"` si nécessaire.
+- Vérifiez les logs dans `/var/log/dvdarchiver-scan/` et `/var/log/dvdarchiver-build/`.
+- Utilisez `journalctl -u dvdarchiver-*-consumer.service` pour suivre les services.
+- En cas d'échec IA, la Phase 2 laisse un `.err` ; corrigez la configuration ou relancez une fois le LLM disponible (`scan_consumer.sh` est idempotent).
+- Assurez-vous que le service Ollama est démarré (`systemctl status ollama`).
 
-## Tests rapides
-
-- `shellcheck bin/*.sh bin/lib/*.sh` pour valider la syntaxe.
-- `QUEUE_DIR=/tmp/dvdarch bin/queue_enqueue.sh` puis `QUEUE_DIR=/tmp/dvdarch bin/queue_consumer.sh` pour un test à blanc (sans disque, le rip échouera mais la file sera exercée).
+Bonne sauvegarde !

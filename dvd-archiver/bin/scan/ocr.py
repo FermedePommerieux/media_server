@@ -1,4 +1,4 @@
-"""Fonctions d'OCR pour le pipeline DVD."""
+"""Extraction et OCR des menus DVD."""
 from __future__ import annotations
 
 import logging
@@ -30,7 +30,26 @@ CANONICAL_LABELS = {
     "audio": ["audio", "lang", "voix", "idioma", "sprache"],
     "subtitles": ["subtitle", "sous", "subt", "untertitel", "sub"],
     "episodes": ["episode", "épisode", "capitulo", "episodio"],
+    "trailer": ["bande-annonce", "trailer", "preview", "annonce"],
 }
+
+
+def _build_filter_chain(
+    preproc_filters: str,
+    scene_mode: int,
+    scene_threshold: float,
+    frame_rate: float,
+) -> str:
+    """Assemble la chaîne de filtres ffmpeg pour l'extraction de frames."""
+
+    filters: List[str] = []
+    if preproc_filters:
+        filters.append(preproc_filters)
+    if scene_mode == 1:
+        filters.append(f"select='gt(scene,{scene_threshold})'")
+    else:
+        filters.append(f"fps={frame_rate}")
+    return ",".join(filter for filter in filters if filter)
 
 
 def extract_menu_frames(
@@ -39,8 +58,11 @@ def extract_menu_frames(
     frame_rate: float,
     frame_max: int,
     ffmpeg_bin: str,
+    scene_mode: int,
+    scene_threshold: float,
+    preproc_filters: str,
 ) -> List[Path]:
-    """Extrait des frames pour OCR via ffmpeg."""
+    """Extrait des frames issues des menus via ffmpeg."""
 
     extracted: List[Path] = []
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -54,6 +76,12 @@ def extract_menu_frames(
                 existing.unlink()
             except OSError:
                 logging.debug("Impossible de supprimer %s", existing)
+        filter_chain = _build_filter_chain(
+            preproc_filters=preproc_filters,
+            scene_mode=scene_mode,
+            scene_threshold=scene_threshold,
+            frame_rate=frame_rate,
+        )
         cmd = [
             ffmpeg_bin,
             "-hide_banner",
@@ -61,12 +89,12 @@ def extract_menu_frames(
             "error",
             "-i",
             str(vob),
-            "-vf",
-            f"fps={frame_rate}",
-            "-frames:v",
-            str(frame_max),
-            str(target_pattern),
         ]
+        if filter_chain:
+            cmd.extend(["-vf", filter_chain])
+        if scene_mode == 1:
+            cmd.extend(["-vsync", "vfr"])
+        cmd.extend(["-frames:v", str(frame_max), str(target_pattern)])
         logging.info("Extraction ffmpeg: %s", " ".join(cmd))
         try:
             subprocess.run(cmd, check=True)
@@ -151,4 +179,3 @@ def normalize_labels(labels: Sequence[Dict[str, object]]) -> Dict[str, object]:
         "categories": {k: v for k, v in categories.items() if v},
         "language": language,
     }
-

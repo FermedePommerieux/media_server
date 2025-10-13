@@ -12,6 +12,8 @@ SCAN_QUEUE_DIR="${SCAN_QUEUE_DIR:-/var/spool/dvdarchiver-scan}"
 SCAN_LOG_DIR="${SCAN_LOG_DIR:-/var/log/dvdarchiver-scan}"
 SCAN_SCANNER_BIN="${SCAN_SCANNER_BIN:-/usr/local/bin/scan/scanner.py}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MKV_BUILD_ENQUEUE="${MKV_BUILD_ENQUEUE_BIN:-${SCRIPT_DIR}/mkv_build_enqueue.sh}"
 
 log() {
   printf '[scan_consumer] %s\n' "$*"
@@ -87,6 +89,13 @@ process_job() {
   if [[ $status -eq 0 ]]; then
     suffix="done"
     log "Job terminé pour $disc_dir"
+    if [[ -x "$MKV_BUILD_ENQUEUE" ]]; then
+      if ! "$MKV_BUILD_ENQUEUE" "$disc_dir"; then
+        log "Échec de l'enqueue build pour $disc_dir"
+      fi
+    else
+      log "Script mkv_build_enqueue introuvable ($MKV_BUILD_ENQUEUE)"
+    fi
   else
     suffix="err"
     log "Job en erreur ($status) pour $disc_dir"
