@@ -140,15 +140,7 @@ if command -v ollama >/dev/null 2>&1; then
   set -e
 fi
 
-BIN_SCRIPTS=(
-  "$SCRIPT_DIR/dvd-archiver/bin/do_backup.sh"
-  "$SCRIPT_DIR/bin/queue_enqueue.sh"
-  "$SCRIPT_DIR/bin/queue_consumer.sh"
-  "$SCRIPT_DIR/bin/scan_enqueue.sh"
-  "$SCRIPT_DIR/bin/scan_consumer.sh"
-)
-
-for script in "${BIN_SCRIPTS[@]}"; do
+for script in "$SCRIPT_DIR"/bin/do_rip.sh "$SCRIPT_DIR"/bin/queue_enqueue.sh "$SCRIPT_DIR"/bin/queue_consumer.sh "$SCRIPT_DIR"/bin/scan_enqueue.sh "$SCRIPT_DIR"/bin/scan_consumer.sh; do
   install -m 0755 "$script" "$BINDIR/$(basename "$script")"
   echo "Installé $BINDIR/$(basename "$script")"
 done

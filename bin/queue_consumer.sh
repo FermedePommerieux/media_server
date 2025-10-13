@@ -27,45 +27,10 @@ fi
 # shellcheck source=bin/lib/common.sh
 source "$LIB_DIR/common.sh"
 
-DO_BACKUP_BIN="${DO_BACKUP_BIN:-}"
+DO_RIP_BIN="${DO_RIP_BIN:-$SCRIPT_DIR/do_rip.sh}"
 
-find_do_backup() {
-  if [[ -n "$DO_BACKUP_BIN" ]]; then
-    if command -v "$DO_BACKUP_BIN" >/dev/null 2>&1; then
-      DO_BACKUP_BIN="$(command -v "$DO_BACKUP_BIN")"
-      return 0
-    fi
-    if [[ -x "$DO_BACKUP_BIN" ]]; then
-      return 0
-    fi
-  fi
-
-  local candidate
-  if command -v do_backup.sh >/dev/null 2>&1; then
-    candidate="$(command -v do_backup.sh)"
-    if [[ -x "$candidate" ]]; then
-      DO_BACKUP_BIN="$candidate"
-      return 0
-    fi
-  fi
-
-  candidate="$SCRIPT_DIR/do_backup.sh"
-  if [[ -x "$candidate" ]]; then
-    DO_BACKUP_BIN="$candidate"
-    return 0
-  fi
-
-  candidate="$SCRIPT_DIR/../dvd-archiver/bin/do_backup.sh"
-  if [[ -x "$candidate" ]]; then
-    DO_BACKUP_BIN="$candidate"
-    return 0
-  fi
-
-  return 1
-}
-
-if ! find_do_backup; then
-  log_err "Script do_backup introuvable (utilisez DO_BACKUP_BIN pour préciser le chemin)"
+if [[ ! -x "$DO_RIP_BIN" ]]; then
+  log_err "Script do_rip introuvable ou non exécutable: $DO_RIP_BIN"
   exit 51
 fi
 
@@ -80,7 +45,7 @@ process_job() {
   source "$job"
   local status_file
   status_file="${job%.job}"
-  if [[ "${ACTION:-}" != "BACKUP" ]]; then
+  if [[ "${ACTION:-}" != "RIP" ]]; then
     log_warn "Action inconnue (${ACTION:-}) pour $job"
     rm -f "${status_file}.skipped"
     mv "$job" "${status_file}.skipped"
@@ -88,7 +53,7 @@ process_job() {
   fi
   export DEVICE
   local exit_code=0
-  if "$DO_BACKUP_BIN"; then
+  if "$DO_RIP_BIN"; then
     exit_code=0
   else
     exit_code=$?

@@ -75,7 +75,7 @@ remove_dir() {
 }
 
 # Supprimer les binaires et bibliothèques installés
-for script in do_backup.sh queue_enqueue.sh queue_consumer.sh scan_enqueue.sh scan_consumer.sh; do
+for script in do_rip.sh queue_enqueue.sh queue_consumer.sh scan_enqueue.sh scan_consumer.sh; do
   remove_file "${BINDIR}/${script}"
 done
 remove_dir "$SCAN_PY_DIR"
