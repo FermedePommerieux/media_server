@@ -1,4 +1,4 @@
-"""Analyse IA des structures DVD."""
+"""Analyse IA des structures DVD pour remplir le schéma requis."""
 from __future__ import annotations
 
 import json
@@ -8,36 +8,55 @@ from typing import Dict, List
 import ai_providers
 
 
+SCHEMA_DOC = """
+Tu dois répondre avec un JSON strict respectant exactement ce schéma :
+{
+  "content_type": "film|serie|autre",
+  "movie_title": "string|null",
+  "series_title": "string|null",
+  "year": 2000|null,
+  "language": "fr|en|...|unknown",
+  "items": [
+    {
+      "title_index": 1,
+      "type": "main|episode|bonus|trailer",
+      "label": "Main Feature|Episode 1|Bonus...",
+      "season": 1|null,
+      "episode": 1|null,
+      "episode_title": "string|null"
+    }
+  ],
+  "mapping": {"title_1": "Main Feature"},
+  "confidence": 0.0
+}
+- Laisse runtime_seconds/audio_langs/sub_langs au système : ne les retourne pas.
+- Utilise le français.
+- Appuie-toi sur les durées et langues techniques pour déterminer le type de contenu.
+""".strip()
+
+
 def _build_prompt(
     ocr_texts: List[Dict[str, object]],
     normalized_labels: Dict[str, object],
     struct: Dict[str, object],
     fingerprint: Dict[str, object],
 ) -> str:
-    schema = """
-Tu dois répondre avec un JSON strict respectant exactement ce schéma :
-{
-  "movie_title": "string|null",
-  "content_type": "film|serie|autre",
-  "language": "fr|en|es|de|it|...|unknown",
-  "menu_labels": ["Play","Chapters","Subtitles","Bonus"],
-  "mapping": {"title_1":"Main Feature","title_2":"Bonus: Making Of"},
-  "confidence": 0.0
-}
-""".strip()
-
     prompt = (
-        "Tu es un assistant expert en DVD. Analyse les données OCR, la structure technique et les empreintes pour déduire la nature du contenu.\n"
+        "Tu es un assistant expert en archivage DVD. Analyse les menus, les données techniques et les empreintes.\n"
+        "Objectif : fournir le JSON décrit ci-dessous pour aider à nommer correctement les MKV.\n"
+        f"{SCHEMA_DOC}\n"
         "Consignes :\n"
-        "- Travaille en français.\n"
-        "- Si l'information manque, reste prudent et baisse la confiance.\n"
-        "- Ne devine pas de titre inventé.\n"
-        f"{schema}\n"
-        "Données OCR (liste de textes avec confiance) :\n"
+        "- Ne rends aucune clé en plus.\n"
+        "- Garde une approche prudente, baisse la confiance si doute.\n"
+        "- Si le titre ou l'année sont inconnus, renvoie null.\n"
+        "- Pour les séries, renseigne saison/épisode à partir des menus si possible.\n"
+        "- Pour les bonus, titre clair (ex: 'Bonus: Making Of').\n"
+        "- mapping doit couvrir tous les titres importants.\n"
+        "Données OCR (texte, frame, confiance) :\n"
         f"{json.dumps(ocr_texts, ensure_ascii=False)}\n"
-        "Labels normalisés :\n"
+        "Labels catégorisés :\n"
         f"{json.dumps(normalized_labels, ensure_ascii=False)}\n"
-        "Structure technique (durées, langues) :\n"
+        "Structure technique (durées/langues) :\n"
         f"{json.dumps(struct, ensure_ascii=False)}\n"
         "Empreinte disque :\n"
         f"{json.dumps(fingerprint, ensure_ascii=False)}\n"
@@ -73,7 +92,15 @@ def infer_structure(
         logging.error("Réponse IA inattendue (type %s)", type(payload))
         return None
 
-    payload.setdefault("source", cfg.provider)
-    payload.setdefault("model", cfg.model)
+    payload.setdefault("content_type", "autre")
+    payload.setdefault("movie_title", None)
+    payload.setdefault("series_title", None)
+    payload.setdefault("year", None)
+    payload.setdefault("language", "unknown")
+    payload.setdefault("items", [])
+    payload.setdefault("mapping", {})
+    payload.setdefault("confidence", 0.3)
+    payload["provider"] = cfg.provider
+    payload["model"] = cfg.model
     return payload
 
