@@ -4,7 +4,7 @@ Pipeline complet « Backup → OCR/IA → MKV » pour archiver des DVD vidéo en
 
 ## Vue d'ensemble
 
-1. **Backup décrypté (Phase 1)** : `bin/do_backup.sh` lance `makemkvcon backup --decrypt` pour créer une copie complète du DVD (menus inclus) dans `raw/VIDEO_TS_BACKUP/`. La commande calcule un `disc_uid`, écrit `tech/fingerprint.json` ainsi que `tech/structure.lsdvd.yml`, puis enfile automatiquement la Phase 2.
+1. **Rip & sauvegarde menus (Phase 1)** : `bin/do_rip.sh` orchestre le rip complet avec `makemkvcon mkv disc:0 all` vers `mkv/` et, si configuré, déclenche un backup décrypté des menus dans `raw/VIDEO_TS_BACKUP/`. La commande calcule un `disc_uid`, écrit `tech/fingerprint.json` ainsi que `tech/structure.lsdvd.yml`, puis enfile automatiquement la Phase 2.
 2. **Analyse menus + IA (Phase 2)** : `scan_consumer.sh` consomme les jobs de scan, extrait les menus `.VOB` via ffmpeg, exécute Tesseract, agrège les heuristiques et interroge un LLM local (Qwen2.5-14B via Ollama par défaut) pour produire `meta/metadata_ia.json` conforme au schéma imposé.
 3. **Build MKV (Phase 3)** : `mkv_build_consumer.sh` ne traite que les disques dont la métadonnée a été validée. Pour chaque titre, il appelle `makemkvcon mkv file:... title:X`, renomme les fichiers, génère des NFO Jellyfin/Kodi et exporte automatiquement les couples `.mkv`/`.nfo` vers les bibliothèques Jellyfin configurées (films, séries, bonus compris).
 
@@ -40,7 +40,7 @@ Le script d'installation :
 ## Test manuel
 
 ```bash
-sudo /usr/local/bin/do_backup.sh         # Phase 1 sur le DVD présent dans le lecteur
+sudo /usr/local/bin/do_rip.sh            # Phase 1 sur le DVD présent dans le lecteur
 journalctl -u dvdarchiver-scan-consumer.service -f
 journalctl -u dvdarchiver-mkv-build-consumer.service -f
 ```
@@ -80,7 +80,7 @@ Tous ces binaires doivent être accessibles par l'utilisateur système exécutan
 
 ## Idempotence & reprise
 
-- `do_backup.sh` s'arrête si un backup existe déjà (présence de `.VOB` dans `raw/VIDEO_TS_BACKUP/VIDEO_TS/`).
+- `do_rip.sh` s'arrête si un rip existe déjà (présence de `.mkv` dans `mkv/` ou, si la sauvegarde menus est activée, de `.VOB` dans `raw/VIDEO_TS_BACKUP/VIDEO_TS/`).
 - `scan_enqueue.sh` ne crée pas de job si `meta/metadata_ia.json` est déjà présent.
 - `mkv_build_enqueue.sh` refuse d'ajouter un job tant que la métadonnée manque.
 - Les consommateurs déplacent chaque job en `.done` ou `.err` et conservent un log détaillé.
