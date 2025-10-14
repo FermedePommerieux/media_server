@@ -31,8 +31,34 @@ MIN_FREE_GB="${MIN_FREE_GB:-10}"
 EJECT_ON_DONE="${EJECT_ON_DONE:-1}"
 ALLOW_ISO_DUMP="${ALLOW_ISO_DUMP:-0}"
 ARCHIVE_LAYOUT_VERSION="${ARCHIVE_LAYOUT_VERSION:-1.0}"
+DEBUG_MODE="${DEBUG_MODE:-0}"
 
 LOG_TAG="dvdarchiver"
+
+debug_enabled() {
+  [[ "$DEBUG_MODE" == "1" ]]
+}
+
+cleanup_artifact() {
+  local path="$1"
+  local reason="${2:-}"
+  if [[ ! -e "$path" && ! -L "$path" ]]; then
+    return
+  fi
+  if debug_enabled; then
+    local msg="Mode debug actif : conservation de $path"
+    if [[ -n "$reason" ]]; then
+      msg+=" (${reason})"
+    fi
+    log_info "$msg"
+  else
+    if [[ -d "$path" && ! -L "$path" ]]; then
+      rm -rf "$path"
+    else
+      rm -f "$path"
+    fi
+  fi
+}
 
 _ts_now() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
