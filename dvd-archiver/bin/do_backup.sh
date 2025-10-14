@@ -79,10 +79,20 @@ extract_disc_title() {
   echo "$title"
 }
 
+filter_stable_info() {
+  local info_file="$1"
+  awk '/^(DRV|CINFO|TINFO|SINFO|PINFO|AINFO|DINFO|DISC|CAPP):/ { sub(/\r$/,""); print }' "$info_file"
+}
+
+compute_info_sha256() {
+  local info_file="$1"
+  filter_stable_info "$info_file" | sha256sum | awk '{print $1}'
+}
+
 compute_disc_uid() {
-  local info_file="$1" title="$2" hash
-  hash=$(sha256sum "$info_file" | awk '{print $1}')
-  printf '%s\n%s' "$title" "$hash" | sha256sum | awk '{print substr($1,1,16)}'
+  local info_file="$1" title="$2" info_hash
+  info_hash=$(compute_info_sha256 "$info_file")
+  printf '%s\n%s' "$title" "$info_hash" | sha256sum | awk '{print substr($1,1,16)}'
 }
 
 write_fingerprint() {
@@ -90,7 +100,7 @@ write_fingerprint() {
   local fingerprint="$dest_dir/tech/fingerprint.json"
   mkdir -p "$dest_dir/tech"
   local info_sha
-  info_sha=$(sha256sum "$info_file" | awk '{print $1}')
+  info_sha=$(compute_info_sha256 "$info_file")
   cat <<JSON >"$fingerprint"
 {
   "disc_uid": "${disc_uid}",
