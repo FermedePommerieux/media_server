@@ -52,10 +52,14 @@ cleanup_artifact() {
     fi
     log_info "$msg"
   else
+    local rm_failed=0
     if [[ -d "$path" && ! -L "$path" ]]; then
-      rm -rf "$path"
+      rm -rf "$path" || rm_failed=1
     else
-      rm -f "$path"
+      rm -f "$path" || rm_failed=1
+    fi
+    if (( rm_failed )); then
+      log_warn "Impossible de supprimer $path, artefact conservé pour diagnostic"
     fi
   fi
 }
