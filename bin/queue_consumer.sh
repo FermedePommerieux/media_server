@@ -26,6 +26,7 @@ if [[ -z "$LIB_DIR" ]]; then
 fi
 # shellcheck source=bin/lib/common.sh
 source "$LIB_DIR/common.sh"
+log_debug "Bibliothèque partagée chargée depuis $LIB_DIR"
 
 resolve_bin() {
   local __target="$1"; shift || true
@@ -39,6 +40,11 @@ resolve_bin() {
     fi
   done
   printf -v "${__target}" '%s' "$resolved"
+  if [[ -n "$resolved" ]]; then
+    log_debug "Binaire résolu pour $__target: $resolved"
+  else
+    log_debug "Aucun binaire trouvé pour $__target parmi: $*"
+  fi
 }
 
 declare -a DO_BACKUP_CANDIDATES=()
@@ -56,6 +62,7 @@ if [[ -z "$DO_BACKUP_BIN_RESOLVED" ]]; then
   log_err "Script do_backup introuvable (candidats: ${backup_candidates_str})"
   exit 51
 fi
+log_debug "do_backup résolu vers $DO_BACKUP_BIN_RESOLVED"
 
 declare -a LEGACY_RIP_CANDIDATES=()
 LEGACY_RIP_BIN="${LEGACY_RIP_BIN:-${DO_RIP_BIN:-}}"
@@ -72,16 +79,23 @@ if [[ -n "${LEGACY_RIP_CANDIDATES[*]:-}" ]]; then
 else
   LEGACY_RIP_BIN_RESOLVED=""
 fi
+if [[ -n "$LEGACY_RIP_BIN_RESOLVED" ]]; then
+  log_debug "Script post-backup actif: $LEGACY_RIP_BIN_RESOLVED"
+else
+  log_debug "Aucun script post-backup configuré"
+fi
 
 process_job() {
   local job="$1"
   log_info "Traitement du job $job"
+  log_debug "Lecture du contenu job depuis $job"
   if [[ ! -f "$job" ]]; then
     log_warn "Job $job introuvable"
     return
   fi
   # shellcheck disable=SC1090
   source "$job"
+  log_debug "Paramètres du job: DEVICE=${DEVICE:-?} ACTION=${ACTION:-?} JOB_TS=${JOB_TS:-?} JOB_ID=${JOB_ID:-?}"
   local status_file
   status_file="${job%.job}"
   if [[ "${ACTION:-}" != "RIP" ]]; then
@@ -93,27 +107,33 @@ process_job() {
   export DEVICE
   local exit_code=0
   log_info "Exécution do_backup: $DO_BACKUP_BIN_RESOLVED"
+  log_debug "Début do_backup pour $job"
   if "$DO_BACKUP_BIN_RESOLVED"; then
     exit_code=0
   else
     exit_code=$?
+    log_debug "do_backup s'est terminé avec le code $exit_code"
   fi
   if [[ $exit_code -eq 0 && -n "$LEGACY_RIP_BIN_RESOLVED" ]]; then
     log_info "Exécution post-backup (do_rip): $LEGACY_RIP_BIN_RESOLVED"
+    log_debug "Début do_rip pour $job"
     if "$LEGACY_RIP_BIN_RESOLVED"; then
       exit_code=0
     else
       exit_code=$?
+      log_debug "do_rip s'est terminé avec le code $exit_code"
     fi
   fi
   if [[ $exit_code -eq 0 ]]; then
     rm -f "${status_file}.done"
     mv "$job" "${status_file}.done"
     log_info "Job terminé: ${status_file}.done"
+    log_debug "Job ${status_file} déplacé en .done"
   else
     rm -f "${status_file}.err"
     mv "$job" "${status_file}.err"
     log_err "Job en échec (code $exit_code): ${status_file}.err"
+    log_debug "Job ${status_file} déplacé en .err (code $exit_code)"
   fi
 }
 
@@ -121,11 +141,13 @@ main() {
   ensure_dirs
   local jobs=()
   mapfile -t jobs < <(find "$QUEUE_DIR" -maxdepth 1 -type f -name 'JOB_*.job' | sort)
+  log_debug "Jobs détectés: ${#jobs[@]}"
   if [[ ${#jobs[@]} -eq 0 ]]; then
     log_info "Aucun job à consommer"
     return 0
   fi
   for job in "${jobs[@]}"; do
+    log_debug "Traitement en file: $job"
     if [[ -f "$job" ]]; then
       process_job "$job"
     fi

@@ -9,6 +9,7 @@ _mount_temp_dir() {
   mkdir -p "$TMP_DIR"
   local temp_dir
   temp_dir="$(mktemp -d "${TMP_DIR%/}/mnt.XXXXXX")"
+  log_debug "Point de montage temporaire créé: $temp_dir"
   echo "$temp_dir"
 }
 
@@ -17,8 +18,10 @@ disc_struct_hash() {
   mount_point=$(_mount_temp_dir)
   local hash=""
   if mount -o "$MOUNT_OPTS" "$DEVICE" "$mount_point" >/dev/null 2>&1; then
+    log_debug "Montage réussi de $DEVICE sur $mount_point pour hash structurel"
     local video_ts_dir="$mount_point/VIDEO_TS"
     if [[ -d "$video_ts_dir" ]]; then
+      log_debug "Collecte des IFO/VOB pour hash structurel dans $video_ts_dir"
       hash=$( {
         if [[ -f "$video_ts_dir/VIDEO_TS.IFO" ]]; then
           cat "$video_ts_dir/VIDEO_TS.IFO"
@@ -36,11 +39,13 @@ disc_struct_hash() {
     log_warn "Montage impossible pour calcul de hash structurel"
   fi
   rmdir "$mount_point" 2>/dev/null || true
+  log_debug "Hash structurel obtenu: ${hash:-<vide>}"
   printf '%s' "$hash"
 }
 
 _read_sectors() {
   local offset="$1"
+  log_debug "Lecture de ${DISC_HASH_COUNT_SECT} secteurs à partir de l'offset $offset"
   dd if="$DEVICE" bs=2048 skip="$offset" count="$DISC_HASH_COUNT_SECT" status=none 2>/dev/null || true
 }
 
@@ -55,6 +60,7 @@ disc_sector_hash() {
     read -r -a extra_array <<<"${DISC_HASH_EXTRA_OFFSETS}"
     offsets+=("${extra_array[@]}")
   fi
+  log_debug "Offsets utilisés pour le hash secteurs: ${offsets[*]}"
   for offset in "${offsets[@]}"; do
     _read_sectors "$offset" >>"$tmpfile"
   done
@@ -62,6 +68,7 @@ disc_sector_hash() {
   local sector_hash
   sector_hash=$(sha256sum "$tmpfile" | awk '{print $1}')
   rm -f "$tmpfile"
+  log_debug "Hash secteurs obtenu: $sector_hash"
   printf '%s' "$sector_hash"
 }
 
@@ -75,6 +82,7 @@ disc_id() {
   else
     combined="$sector_hash"
   fi
+  log_debug "Combinaison des hashes (struct=${struct_hash:-<vide>}, sector=$sector_hash)"
   DISC_SHA_FULL=$(printf '%s' "$combined" | sha256sum | awk '{print $1}')
   export DISC_SHA_FULL
   local trim_len="$DISC_HASH_TRIM"

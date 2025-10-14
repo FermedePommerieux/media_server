@@ -7,6 +7,11 @@ if [[ -f "$CONFIG_FILE" ]]; then
   source "$CONFIG_FILE"
 fi
 
+DEBUG="${DEBUG:-0}"
+if [[ ! "$DEBUG" =~ ^[0-9]+$ ]]; then
+  DEBUG=0
+fi
+
 DEST="${DEST:-/mnt/media_master}"
 QUEUE_DIR="${QUEUE_DIR:-/var/spool/dvdarchiver}"
 LOG_DIR="${LOG_DIR:-/var/log/dvdarchiver}"
@@ -34,6 +39,10 @@ ARCHIVE_LAYOUT_VERSION="${ARCHIVE_LAYOUT_VERSION:-1.0}"
 
 LOG_TAG="dvdarchiver"
 
+debug_enabled() {
+  (( DEBUG > 0 ))
+}
+
 _ts_now() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -49,10 +58,14 @@ log_message() {
     INFO) severity="info" ;;
     WARN) severity="warning" ;;
     ERR) severity="err" ;;
+    DEBUG) severity="debug" ;;
     *) severity="notice" ;;
   esac
   if command -v logger >/dev/null 2>&1; then
     logger -t "$LOG_TAG" -p "user.${severity}" -- "$msg"
+  fi
+  if debug_enabled; then
+    printf '%s [%s] %s\n' "$timestamp" "$level" "$msg" >&2
   fi
 }
 
@@ -68,8 +81,15 @@ log_err() {
   log_message "ERR" "$*"
 }
 
+log_debug() {
+  if debug_enabled; then
+    log_message "DEBUG" "$*"
+  fi
+}
+
 require_cmd() {
   local bin="$1"
+  log_debug "Vérification de la dépendance: $bin"
   if ! command -v "$bin" >/dev/null 2>&1; then
     log_err "Dépendance manquante: $bin"
     printf 'Commande requise introuvable: %s\n' "$bin" >&2
@@ -78,6 +98,7 @@ require_cmd() {
 }
 
 ensure_dirs() {
+  log_debug "Création des répertoires nécessaires: DEST=$DEST, QUEUE_DIR=$QUEUE_DIR, LOG_DIR=$LOG_DIR, TMP_DIR=$TMP_DIR"
   mkdir -p "$DEST" "$QUEUE_DIR" "$LOG_DIR" "$TMP_DIR"
 }
 
@@ -86,10 +107,12 @@ check_free_space_gb() {
   local min_gb="$2"
   local free_gb
   if [[ ! -d "$path" ]]; then
+    log_debug "Répertoire $path absent, création avant vérification d'espace"
     mkdir -p "$path"
   fi
   free_gb=$(df --output=avail -BG "$path" | tail -n 1 | tr -dc '0-9')
   free_gb=${free_gb:-0}
+  log_debug "Espace libre détecté sur $path: ${free_gb}G (minimum requis: ${min_gb}G)"
   if (( free_gb < min_gb )); then
     log_err "Espace disque insuffisant sur $path: ${free_gb}G < ${min_gb}G"
     printf 'Espace disque insuffisant sur %s: %sG disponibles, requis: %sG\n' "$path" "$free_gb" "$min_gb" >&2
@@ -101,6 +124,7 @@ safe_umount() {
   local mountpoint="$1"
   if command -v mountpoint >/dev/null 2>&1; then
     if mountpoint -q "$mountpoint"; then
+      log_debug "Démontage du point de montage temporaire $mountpoint"
       umount "$mountpoint" || log_warn "Impossible de démonter $mountpoint"
     fi
   else

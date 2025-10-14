@@ -33,6 +33,7 @@ source "$LIB_DIR/techdump.sh"
 
 main() {
   log_info "Début de session de rip sur $DEVICE"
+  log_debug "Contexte rip: DEST=$DEST, LOG_DIR=$LOG_DIR, TMP_DIR=$TMP_DIR, CONFIG_FILE=${CONFIG_FILE:-/etc/dvdarchiver.conf}"
   ensure_dirs
 
   require_cmd "$MAKEMKV_BIN"
@@ -53,8 +54,10 @@ main() {
 
   local volume_id
   if ! volume_id=$(dump_volume_id); then
+    log_debug "Volume ID indisponible via isoinfo"
     volume_id="DVD_UNTITLED"
   fi
+  log_debug "Volume ID détecté: $volume_id"
   local title="$volume_id"
   if [[ -z "$title" ]]; then
     title="DVD_UNTITLED"
@@ -65,11 +68,13 @@ main() {
     log_err "Impossible de calculer l'empreinte du disque"
     exit 31
   fi
+  log_debug "Empreinte calculée: sha_full=$sha_full sha_short=$disc_sha_short"
   DISC_SHA_FULL="$sha_full"
   DISC_SHA_SHORT="$disc_sha_short"
   export DISC_SHA_FULL DISC_SHA_SHORT
   local dest_dir="$DEST/${DISC_SHA_SHORT}"
   mkdir -p "$dest_dir/mkv" "$dest_dir/tech" "$dest_dir/meta" "$dest_dir/raw"
+  log_debug "Répertoire de destination: $dest_dir"
 
   if compgen -G "$dest_dir/mkv/*.mkv" >/dev/null 2>&1; then
     log_info "Rippage déjà présent pour ${DISC_SHA_SHORT}, aucune action"
@@ -80,6 +85,7 @@ main() {
 
   local logfile="$LOG_DIR/rip-${DISC_SHA_SHORT}-$(ts).log"
   touch "$logfile"
+  log_debug "Journal de rip: $logfile"
 
   local makemkv_cmd=("$MAKEMKV_BIN" -r mkv disc:0 all "$dest_dir/mkv")
   if [[ -n "${MAKEMKV_OPTS:-}" ]]; then
@@ -110,6 +116,7 @@ main() {
   if [[ "$KEEP_MENU_VOBS" -eq 1 && "$MAKEMKV_BACKUP_ENABLE" -eq 1 ]]; then
     local backup_dir="$dest_dir/raw/VIDEO_TS_BACKUP"
     local have_backup=0
+    log_debug "Vérification backup menus dans $backup_dir"
     if [[ -d "$backup_dir/VIDEO_TS" ]]; then
       local pattern
       for pattern in $MENU_VOB_GLOB; do
@@ -122,6 +129,7 @@ main() {
     if (( have_backup )); then
       log_info "Backup menus déjà présent dans $backup_dir"
     else
+      log_debug "Aucun backup menus détecté, création du dossier $backup_dir"
       mkdir -p "$backup_dir"
       local backup_cmd=("$MAKEMKV_BIN" backup)
       if [[ -n "${MAKEMKV_BACKUP_OPTS:-}" ]]; then
@@ -132,6 +140,7 @@ main() {
       fi
       backup_cmd+=("disc:0" "$backup_dir")
       log_info "Commande MakeMKV (backup menus): ${backup_cmd[*]}"
+      log_debug "Lancement backup menus vers $backup_dir (journal: $logfile)"
       if ! "${backup_cmd[@]}" >>"$logfile" 2>&1; then
         log_warn "Échec du backup menus, voir $logfile"
       else
@@ -144,14 +153,18 @@ main() {
 
   if ! dump_lsdvd_yaml "$dest_dir/tech/structure.lsdvd.yml"; then
     log_warn "Impossible de générer le dump lsdvd"
+    log_debug "Vérifier $dest_dir/tech/structure.lsdvd.err pour plus de détails"
   fi
 
   write_fingerprint_json "$dest_dir" "$DISC_SHA_SHORT" "$volume_id" "$sha_full"
+  log_debug "fingerprint.json écrit dans $dest_dir/tech"
 
   if [[ "${ALLOW_ISO_DUMP}" -eq 1 ]]; then
     log_info "Dump ISO brut activé"
+    log_debug "Début du dd if=$DEVICE of=$dest_dir/raw/dvd.iso"
     if dd if="$DEVICE" of="$dest_dir/raw/dvd.iso" bs=1M status=none >>"$logfile" 2>&1; then
       sha256sum "$dest_dir/raw/dvd.iso" >"$dest_dir/raw/dvd.iso.sha256"
+      log_debug "Checksum ISO écrit dans $dest_dir/raw/dvd.iso.sha256"
     else
       log_warn "Échec du dump ISO brut"
     fi
@@ -160,6 +173,7 @@ main() {
   if [[ "${EJECT_ON_DONE}" -eq 1 ]]; then
     if ! "$EJECT_BIN" "$DEVICE" >>"$logfile" 2>&1; then
       log_warn "Impossible d'éjecter $DEVICE"
+      log_debug "Commande d'éjection $EJECT_BIN $DEVICE en échec (voir $logfile)"
     fi
   fi
 

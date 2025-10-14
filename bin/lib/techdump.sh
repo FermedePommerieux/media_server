@@ -10,15 +10,19 @@ dump_volume_id() {
     log_warn "isoinfo indisponible pour extraire le volume ID"
     return 1
   fi
+  log_debug "Extraction du volume ID avec $ISOINFO_BIN depuis $DEVICE"
   local output
   if ! output="$($ISOINFO_BIN -d -i "$DEVICE" 2>/dev/null)"; then
+    log_debug "isoinfo a échoué pour $DEVICE"
     return 1
   fi
   local volume_id
   volume_id=$(printf '%s\n' "$output" | awk -F': ' '/Volume id:/ {print $2; exit}')
   if [[ -z "$volume_id" ]]; then
+    log_debug "Volume ID non trouvé dans la sortie isoinfo"
     return 1
   fi
+  log_debug "Volume ID trouvé: $volume_id"
   printf '%s' "$volume_id"
 }
 
@@ -28,11 +32,18 @@ dump_lsdvd_yaml() {
     log_warn "lsdvd indisponible pour le dump structurel"
     return 1
   fi
+  log_debug "Exécution de $LSDVD_BIN -Oy $DEVICE (sortie: $outfile)"
   if ! $LSDVD_BIN -Oy "$DEVICE" >"$outfile" 2>"$outfile.err"; then
     log_warn "Échec lsdvd, voir $outfile.err"
+    if debug_enabled; then
+      tail -n 20 "$outfile.err" 2>/dev/null | while IFS= read -r line; do
+        log_debug "lsdvd stderr: $line"
+      done
+    fi
     return 1
   fi
   rm -f "$outfile.err"
+  log_debug "Dump lsdvd écrit dans $outfile"
   return 0
 }
 
@@ -58,4 +69,5 @@ write_fingerprint_json() {
   "layout_version": "${escaped_layout}"
 }
 JSON
+  log_debug "fingerprint.json mis à jour pour $disc_uid"
 }

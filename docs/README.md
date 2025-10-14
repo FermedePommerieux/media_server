@@ -96,6 +96,7 @@ Voir `etc/dvdarchiver.conf.sample` pour la liste complète :
 - `OUTPUT_NAMING_TEMPLATE_*` pour personnaliser les noms déposés dans `mkv/`.
 - Bloc **Export Jellyfin** (`EXPORT_ENABLE`, `EXPORT_METHOD`, `EXPORT_MOVIES_DIR`, `EXPORT_SERIES_DIR`, `EXPORT_MOVIE_EXTRAS_SUBDIR`, `EXPORT_SERIES_SPECIALS_SEASON`, `NFO_LANGUAGE_DEFAULT`, `SANITIZE_MAXLEN`) pour piloter l'export automatique (copy/move/ln) et la sanitation des chemins.
 - `WRITE_NFO=1` pour produire les `.nfo` locaux **et** exportés.
+- `DEBUG=1` pour activer un mode verbeux : chaque étape du backup, de la file d'attente et du rip écrit les commandes exécutées, les chemins utilisés et les éventuelles erreurs dans les logs **et** sur la sortie standard.
 
 ## Dépannage
 

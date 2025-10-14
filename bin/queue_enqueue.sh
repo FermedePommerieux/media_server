@@ -26,6 +26,7 @@ if [[ -z "$LIB_DIR" ]]; then
 fi
 # shellcheck source=bin/lib/common.sh
 source "$LIB_DIR/common.sh"
+log_debug "Bibliothèque partagée chargée depuis $LIB_DIR"
 
 main() {
   ensure_dirs
@@ -33,11 +34,13 @@ main() {
   ts_now=$(ts)
   rand=$(printf '%06d' "$RANDOM")
   local safe_ts
-  safe_ts="${ts_now//[^0-9]/}" 
+  safe_ts="${ts_now//[^0-9]/}"
   job_file="$QUEUE_DIR/JOB_${safe_ts}_${rand}.job"
+  log_debug "Fichier de job initial: $job_file"
   while [[ -e "$job_file" ]]; do
     rand=$(printf '%06d' "$RANDOM")
     job_file="$QUEUE_DIR/JOB_${safe_ts}_${rand}.job"
+    log_debug "Collision de nom, nouveau fichier de job: $job_file"
   done
   cat >"$job_file" <<JOB
 DEVICE=${DEVICE}
@@ -45,6 +48,7 @@ ACTION=RIP
 JOB_TS=${ts_now}
 JOB_ID=${rand}
 JOB
+  log_debug "Job écrit avec DEVICE=$DEVICE, ACTION=RIP"
   log_info "Nouveau job en file: $job_file"
 }
 
