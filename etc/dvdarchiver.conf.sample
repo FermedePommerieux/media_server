@@ -1,5 +1,8 @@
 # /etc/dvdarchiver.conf
 
+# --- Journalisation ---
+DEBUG=0
+
 # --- Dossiers principaux ---
 DEST="/mnt/media_master"
 QUEUE_DIR="/var/spool/dvdarchiver"
