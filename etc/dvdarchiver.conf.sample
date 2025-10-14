@@ -8,10 +8,6 @@ TMP_DIR="/var/tmp/dvdarchiver"
 SCAN_QUEUE_DIR="/var/spool/dvdarchiver-scan"
 SCAN_LOG_DIR="/var/log/dvdarchiver-scan"
 
-# --- Mode debug ---
-# Positionnez à 1 pour conserver l'ensemble des fichiers temporaires et journaux intermédiaires.
-DEBUG_MODE=0
-
 # --- Lecteur & outils de base ---
 DEVICE="/dev/sr0"
 MAKEMKV_BIN="makemkvcon"

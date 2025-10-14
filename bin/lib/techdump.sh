@@ -32,7 +32,7 @@ dump_lsdvd_yaml() {
     log_warn "Échec lsdvd, voir $outfile.err"
     return 1
   fi
-  cleanup_artifact "$outfile.err" "journal lsdvd"
+  rm -f "$outfile.err"
   return 0
 }
 

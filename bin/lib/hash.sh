@@ -35,7 +35,7 @@ disc_struct_hash() {
   else
     log_warn "Montage impossible pour calcul de hash structurel"
   fi
-  cleanup_artifact "$mount_point" "répertoire de montage temporaire"
+  rmdir "$mount_point" 2>/dev/null || true
   printf '%s' "$hash"
 }
 
@@ -61,7 +61,7 @@ disc_sector_hash() {
   printf '\n%s' "$title" >>"$tmpfile"
   local sector_hash
   sector_hash=$(sha256sum "$tmpfile" | awk '{print $1}')
-  cleanup_artifact "$tmpfile" "dump secteurs (hash)"
+  rm -f "$tmpfile"
   printf '%s' "$sector_hash"
 }
 
