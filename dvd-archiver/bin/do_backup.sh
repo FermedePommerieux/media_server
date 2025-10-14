@@ -12,7 +12,6 @@ RAW_BACKUP_DIR="${RAW_BACKUP_DIR:-raw/VIDEO_TS_BACKUP}"
 TMP_DIR="${TMP_DIR:-/var/tmp/dvdarchiver}"
 LOG_DIR="${LOG_DIR:-/var/log/dvdarchiver}"
 DEVICE="${DEVICE:-/dev/sr0}"
-DEBUG_MODE="${DEBUG_MODE:-0}"
 MAKEMKV_BIN="${MAKEMKV_BIN:-makemkvcon}"
 MAKEMKV_BACKUP_ENABLE="${MAKEMKV_BACKUP_ENABLE:-1}"
 MAKEMKV_BACKUP_OPTS="${MAKEMKV_BACKUP_OPTS:---decrypt}"
@@ -31,31 +30,6 @@ require_bin() {
   if ! command -v "$bin" >/dev/null 2>&1; then
     err "Dépendance manquante: $bin"
     exit 1
-  fi
-}
-
-debug_enabled() {
-  [[ "$DEBUG_MODE" == "1" ]]
-}
-
-cleanup_artifact() {
-  local path="$1"
-  local reason="${2:-}"
-  if [[ ! -e "$path" && ! -L "$path" ]]; then
-    return
-  fi
-  if debug_enabled; then
-    local message="Mode debug actif : conservation de $path"
-    if [[ -n "$reason" ]]; then
-      message+=" (${reason})"
-    fi
-    log "$message"
-  else
-    if [[ -d "$path" && ! -L "$path" ]]; then
-      rm -rf "$path"
-    else
-      rm -f "$path"
-    fi
   fi
 }
 
@@ -88,14 +62,10 @@ run_makemkv_info() {
   log "Extraction des informations disque (${info_cmd[*]})" >&2
   if ! "${info_cmd[@]}" >"$info_file" 2>"$info_file.err"; then
     err "makemkvcon info a échoué (voir $info_file.err)"
-    if [[ -s "$info_file.err" ]]; then
-      cat "$info_file.err" >&2
-    fi
-    cleanup_artifact "$info_file" "résultat info MakeMKV (échec)"
-    cleanup_artifact "$info_file.err" "journal d'erreur MakeMKV"
+    rm -f "$info_file" "$info_file.err"
     exit 1
   fi
-  cleanup_artifact "$info_file.err" "journal d'erreur MakeMKV"
+  rm -f "$info_file.err"
   echo "$info_file"
 }
 
@@ -178,10 +148,16 @@ capture_structure() {
   if ! "${lsdvd_cmd[@]}" >"$tech_dir/structure.lsdvd.yml" 2>"$tech_dir/structure.lsdvd.err"; then
     err "lsdvd a échoué (voir $tech_dir/structure.lsdvd.err)"
     if [[ -s "$tech_dir/structure.lsdvd.err" ]]; then
-      cat "$tech_dir/structure.lsdvd.err" >&2
+      if grep -qi 'Encrypted DVD support unavailable' "$tech_dir/structure.lsdvd.err"; then
+        err "Support CSS absent : installez libdvdcss (ou équivalent) pour permettre la lecture chiffrée."
+      elif grep -qi 'No medium found' "$tech_dir/structure.lsdvd.err"; then
+        err "Aucun média détecté par lsdvd sur ${lsdvd_source}. Vérifiez que le disque est monté et accessible."
+      elif grep -qi "Can't open" "$tech_dir/structure.lsdvd.err"; then
+        err "lsdvd ne parvient pas à ouvrir ${lsdvd_source}. Vérifiez les permissions et la présence du périphérique."
+      fi
     fi
   else
-    cleanup_artifact "$tech_dir/structure.lsdvd.err" "journal lsdvd"
+    rm -f "$tech_dir/structure.lsdvd.err"
   fi
 }
 
@@ -213,7 +189,7 @@ main() {
   run_backup "$dest_dir"
   capture_structure "$dest_dir"
   enqueue_scan "$dest_dir"
-  cleanup_artifact "$info_file" "résultat info MakeMKV"
+  rm -f "$info_file"
   if [[ $EJECT_ON_DONE -eq 1 ]]; then
     if command -v eject >/dev/null 2>&1; then
       eject "$DEVICE" || err "Impossible d'éjecter $DEVICE"
